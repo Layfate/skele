@@ -237,10 +237,14 @@ jobs:
               }
             }
             Invoke-Msi "/i `"$msi`"" "install"
-            # Test-Path, not Get-ChildItem -Recurse: on a missing folder that searches the parent.
-            $exe = Join-Path $env:ProgramFiles "Skele\skele.exe"
+            # The MSI installs to Program Files, unless an earlier install (here: the NSIS one
+            # above) left its folder in HKCU\Software\Skele contributors\Skele\InstallDir.
+            $dir = (Get-ItemProperty "HKCU:\Software\Skele contributors\Skele" -ErrorAction SilentlyContinue).InstallDir
+            if (!$dir) { $dir = Join-Path $env:ProgramFiles "Skele" }
+            $exe = Join-Path $dir "skele.exe"
+            Write-Host "MSI install folder: $dir"
             if (!(Test-Path $exe)) {
-              Get-ChildItem "$env:ProgramFiles\Skele" -ErrorAction SilentlyContinue
+              Get-ChildItem $dir -ErrorAction SilentlyContinue
               Select-String -Path $log -Pattern "INSTALLDIR|Return value 3" -ErrorAction SilentlyContinue | Select-Object -First 40
               throw "MSI didn't install $exe"
             }
