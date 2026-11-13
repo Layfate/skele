@@ -35,10 +35,17 @@ fn write(file: &Path, s: &Saved) {
 fn on_some_monitor<R: Runtime>(window: &WebviewWindow<R>, s: &Saved) -> bool {
     // The title bar (top-left area) must be on a connected monitor, or the window would open
     // off-screen after a display was unplugged.
-    window.available_monitors().unwrap_or_default().iter().any(|m| {
-        let (p, size) = (m.position(), m.size());
-        s.x + 40 >= p.x && s.y >= p.y && s.x + 40 < p.x + size.width as i32 && s.y < p.y + size.height as i32
-    })
+    window
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .any(|m| {
+            let (p, size) = (m.position(), m.size());
+            s.x + 40 >= p.x
+                && s.y >= p.y
+                && s.x + 40 < p.x + size.width as i32
+                && s.y < p.y + size.height as i32
+        })
 }
 
 fn restore<R: Runtime>(window: &WebviewWindow<R>, saved: &Saved) {
@@ -59,10 +66,21 @@ fn current<R: Runtime>(window: &WebviewWindow<R>, previous: Option<Saved>) -> Op
         return previous;
     }
     if maximized {
-        return previous.map(|p| Saved { maximized: true, ..p });
+        return previous.map(|p| Saved {
+            maximized: true,
+            ..p
+        });
     }
-    let (Ok(size), Ok(pos)) = (window.inner_size(), window.outer_position()) else { return previous };
-    Some(Saved { width: size.width, height: size.height, x: pos.x, y: pos.y, maximized: false })
+    let (Ok(size), Ok(pos)) = (window.inner_size(), window.outer_position()) else {
+        return previous;
+    };
+    Some(Saved {
+        width: size.width,
+        height: size.height,
+        x: pos.x,
+        y: pos.y,
+        maximized: false,
+    })
 }
 
 struct Tracker {
@@ -78,7 +96,11 @@ impl Tracker {
         if self.written == Some(state) {
             return;
         }
-        if !force && self.last_write.is_some_and(|t| t.elapsed() < WRITE_INTERVAL) {
+        if !force
+            && self
+                .last_write
+                .is_some_and(|t| t.elapsed() < WRITE_INTERVAL)
+        {
             return;
         }
         write(&self.file, &state);
@@ -94,7 +116,12 @@ pub fn track<R: Runtime>(window: &WebviewWindow<R>, file: PathBuf) {
     if let Some(s) = &saved {
         restore(window, s);
     }
-    let tracker = Mutex::new(Tracker { file, state: saved, written: saved, last_write: None });
+    let tracker = Mutex::new(Tracker {
+        file,
+        state: saved,
+        written: saved,
+        last_write: None,
+    });
     let w = window.clone();
     window.on_window_event(move |event| {
         let force = match event {
@@ -117,10 +144,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("w.json");
         assert!(load(&file).is_none());
-        let s = Saved { width: 900, height: 700, x: 10, y: 20, maximized: true };
+        let s = Saved {
+            width: 900,
+            height: 700,
+            x: 10,
+            y: 20,
+            maximized: true,
+        };
         write(&file, &s);
         assert_eq!(load(&file), Some(s));
-        std::fs::write(&file, br#"{"width":1,"height":1,"x":0,"y":0,"maximized":false}"#).unwrap();
+        std::fs::write(
+            &file,
+            br#"{"width":1,"height":1,"x":0,"y":0,"maximized":false}"#,
+        )
+        .unwrap();
         assert!(load(&file).is_none());
         std::fs::write(&file, b"garbage").unwrap();
         assert!(load(&file).is_none());
@@ -130,9 +167,20 @@ mod tests {
     fn writes_are_throttled_but_forced_writes_land() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("w.json");
-        let a = Saved { width: 900, height: 700, x: 10, y: 20, maximized: false };
+        let a = Saved {
+            width: 900,
+            height: 700,
+            x: 10,
+            y: 20,
+            maximized: false,
+        };
         let b = Saved { x: 50, ..a };
-        let mut t = Tracker { file: file.clone(), state: Some(a), written: None, last_write: None };
+        let mut t = Tracker {
+            file: file.clone(),
+            state: Some(a),
+            written: None,
+            last_write: None,
+        };
         t.flush(false);
         assert_eq!(load(&file), Some(a));
         t.state = Some(b);
