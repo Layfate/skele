@@ -45,6 +45,7 @@ jobs:
             runner: windows-latest
             platform: windows
             arch: x64
+            file_arch: x86_64
             target: x86_64-pc-windows-msvc
             bundles: nsis,msi
             native: true
@@ -53,6 +54,7 @@ jobs:
             runner: windows-latest
             platform: windows
             arch: arm64
+            file_arch: arm64
             target: aarch64-pc-windows-msvc
             # WiX (MSI) can't target ARM64; NSIS and the portable zip can. Cross-compiled, so
             # it can't be launched on this runner.
@@ -63,6 +65,7 @@ jobs:
             runner: macos-latest
             platform: macos
             arch: arm64
+            file_arch: arm64
             target: aarch64-apple-darwin
             bundles: app,dmg
             native: true
@@ -71,6 +74,7 @@ jobs:
             runner: macos-15-intel
             platform: macos
             arch: x64
+            file_arch: x86_64
             target: x86_64-apple-darwin
             bundles: app,dmg
             native: true
@@ -81,6 +85,7 @@ jobs:
             runner: ubuntu-22.04
             platform: linux
             arch: x64
+            file_arch: x86_64
             target: x86_64-unknown-linux-gnu
             bundles: appimage,deb,rpm
             native: true
@@ -89,6 +94,7 @@ jobs:
             runner: ubuntu-22.04-arm
             platform: linux
             arch: arm64
+            file_arch: arm64
             target: aarch64-unknown-linux-gnu
             bundles: appimage,deb,rpm
             native: true
@@ -197,12 +203,13 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $v = node scripts/version.mjs current
+          $name = "dist/Skele-$v-windows-${{ matrix.file_arch }}"
           node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele.exe"
           if ($LASTEXITCODE) { throw "executable failed" }
 
           # Portable zip: data must land in SkeleData next to Skele.exe, nowhere else.
           $portable = Join-Path $env:RUNNER_TEMP "portable"
-          Expand-Archive "dist/Skele_${v}_${{ matrix.arch }}-portable.zip" $portable
+          Expand-Archive "$name.zip" $portable
           $exe = Get-ChildItem $portable -Recurse -Filter Skele.exe | Select-Object -First 1
           node scripts/smoke-test.mjs --exe $exe.FullName --portable
           if ($LASTEXITCODE) { throw "portable failed" }
@@ -211,27 +218,46 @@ jobs:
           # NSIS: silent per-user install → launch with the default data folder → uninstall →
           # the data folder must survive.
           $data = "$env:APPDATA\dev.skele.desktop"
-          Start-Process "dist/Skele_${v}_${{ matrix.arch }}-setup.exe" -ArgumentList "/S" -Wait
+          Start-Process "$name.exe" -ArgumentList "/S" -Wait
           $installed = "$env:LOCALAPPDATA\Skele\skele.exe"
           if (!(Test-Path $installed)) { Get-ChildItem "$env:LOCALAPPDATA\Skele" -ErrorAction SilentlyContinue; throw "NSIS didn't install $installed" }
           if (!(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Skele*" )) { Write-Warning "No Start menu shortcut found" }
           node scripts/smoke-test.mjs --exe $installed --data-dir $data
           if ($LASTEXITCODE) { throw "installed app failed" }
+          # The NSIS uninstaller re-launches itself from %TEMP%, so -Wait returns early: poll.
           Start-Process "$env:LOCALAPPDATA\Skele\uninstall.exe" -ArgumentList "/S" -Wait
-          Start-Sleep 5
+          for ($i = 0; ($i -lt 60) -and (Test-Path $installed); $i++) { Start-Sleep 1 }
           if (Test-Path $installed) { throw "NSIS uninstall left the app behind" }
           if (!(Test-Path "$data\skele.sqlite3")) { throw "Uninstall deleted user data" }
 
           # MSI: install → launch → uninstall.
           if ("${{ matrix.arch }}" -eq "x64") {
-            $msi = (Resolve-Path "dist/Skele_${v}_x64.msi").Path
-            Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
-            $exe = Get-ChildItem "$env:ProgramFiles\Skele" -Filter skele.exe -Recurse | Select-Object -First 1
-            if (!$exe) { throw "MSI didn't install skele.exe" }
-            node scripts/smoke-test.mjs --exe $exe.FullName --data-dir $data
+            $msi = (Resolve-Path "$name.msi").Path
+            $log = Join-Path $env:RUNNER_TEMP "msi.log"
+            function Invoke-Msi([string]$arguments, [string]$what) {
+              # 1618 = another installation is still running (e.g. the NSIS uninstaller): retry.
+              for ($try = 1; $try -le 10; $try++) {
+                $p = Start-Process msiexec -ArgumentList "$arguments /qn /norestart /l*v `"$log`"" -Wait -PassThru
+                if ($p.ExitCode -ne 1618) { break }
+                Start-Sleep 10
+              }
+              if ($p.ExitCode -notin 0, 3010) {
+                Get-Content $log -Tail 150 -ErrorAction SilentlyContinue
+                throw "MSI $what failed with exit code $($p.ExitCode)"
+              }
+            }
+            Invoke-Msi "/i `"$msi`"" "install"
+            # Test-Path, not Get-ChildItem -Recurse: on a missing folder that searches the parent.
+            $exe = Join-Path $env:ProgramFiles "Skele\skele.exe"
+            if (!(Test-Path $exe)) {
+              Get-ChildItem "$env:ProgramFiles\Skele" -ErrorAction SilentlyContinue
+              Select-String -Path $log -Pattern "INSTALLDIR|Return value 3" -ErrorAction SilentlyContinue | Select-Object -First 40
+              throw "MSI didn't install $exe"
+            }
+            node scripts/smoke-test.mjs --exe $exe --data-dir $data
             if ($LASTEXITCODE) { throw "MSI-installed app failed" }
-            Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart" -Wait
-            if (Test-Path $exe.FullName) { throw "MSI uninstall left the app behind" }
+            Invoke-Msi "/x `"$msi`"" "uninstall"
+            if (Test-Path $exe) { throw "MSI uninstall left the app behind" }
             if (!(Test-Path "$data\skele.sqlite3")) { throw "MSI uninstall deleted user data" }
           }
 
@@ -241,14 +267,16 @@ jobs:
         run: |
           set -euo pipefail
           v=$(node scripts/version.mjs current)
+          name="dist/Skele-${v}-macos-${{ matrix.file_arch }}"
           node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele"
-          mount=$(hdiutil attach -nobrowse -readonly "dist/Skele_${v}_macos-${{ matrix.arch }}.dmg" | tail -1 | awk -F'\t' '{print $NF}')
+          # The DMG must open without a prompt (no license agreement), so attach gets no input.
+          mount=$(hdiutil attach -nobrowse -readonly -noautoopen "$name.dmg" < /dev/null | tail -1 | awk -F'\t' '{print $NF}')
           ls "$mount"
           test -L "$mount/Applications" || echo "::warning::DMG has no Applications link"
           node scripts/smoke-test.mjs --exe "$mount/Skele.app/Contents/MacOS/skele"
           hdiutil detach "$mount"
           codesign --verify --deep --verbose=2 "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app"
-          unzip -q "dist/Skele_${v}_macos-${{ matrix.arch }}.zip" -d "$RUNNER_TEMP/zip"
+          unzip -q "$name.zip" -d "$RUNNER_TEMP/zip"
           codesign --verify --deep "$RUNNER_TEMP/zip/Skele.app"
 
       - name: Smoke test (Linux binary, AppImage, .deb, .rpm, tarball)
@@ -259,21 +287,22 @@ jobs:
         run: |
           set -euo pipefail
           v=$(node scripts/version.mjs current)
+          name="Skele-${v}-linux-${{ matrix.file_arch }}"
           xvfb-run -a node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele"
-          chmod +x "dist/Skele_${v}_linux-${{ matrix.arch }}.AppImage"
-          xvfb-run -a node scripts/smoke-test.mjs --exe "dist/Skele_${v}_linux-${{ matrix.arch }}.AppImage"
+          chmod +x "dist/$name.AppImage"
+          xvfb-run -a node scripts/smoke-test.mjs --exe "dist/$name.AppImage"
           # .deb: install with its declared dependencies, launch, check the desktop entry, remove.
-          sudo apt-get install -y "./dist/Skele_${v}_linux-${{ matrix.arch }}.deb"
+          sudo apt-get install -y "./dist/$name.deb"
           test -x /usr/bin/skele
           ls /usr/share/applications/ | grep -i skele
           xvfb-run -a node scripts/smoke-test.mjs --exe /usr/bin/skele
           sudo apt-get remove -y skele
           test ! -e /usr/bin/skele
           # .rpm: dependencies must resolve on Fedora.
-          docker run --rm -v "$PWD/dist:/dist" fedora:41 bash -c "dnf install -y /dist/Skele_${v}_linux-${{ matrix.arch }}.rpm && test -x /usr/bin/skele && dnf remove -y skele"
+          docker run --rm -v "$PWD/dist:/dist" fedora:41 bash -c "dnf install -y /dist/$name.rpm && test -x /usr/bin/skele && dnf remove -y skele"
           # Tarball: the extracted binary runs.
-          mkdir -p "$RUNNER_TEMP/tar" && tar -xzf "dist/Skele_${v}_linux-${{ matrix.arch }}.tar.gz" -C "$RUNNER_TEMP/tar"
-          xvfb-run -a node scripts/smoke-test.mjs --exe "$RUNNER_TEMP/tar/Skele_${v}_linux-${{ matrix.arch }}/skele"
+          mkdir -p "$RUNNER_TEMP/tar" && tar -xzf "dist/$name.tar.gz" -C "$RUNNER_TEMP/tar"
+          xvfb-run -a node scripts/smoke-test.mjs --exe "$RUNNER_TEMP/tar/$name/skele"
 
       - name: Record signing status
         shell: bash

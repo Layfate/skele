@@ -48,7 +48,6 @@
     "publisher": "Skele contributors",
     "copyright": "Copyright © 2026 Skele contributors. MIT License.",
     "license": "MIT",
-    "licenseFile": "../LICENSE",
     "category": "Productivity",
     "shortDescription": "A calm, local-first workspace for notes, tasks, projects and databases",
     "longDescription": "Skele is a free, open-source, local-first workspace for notes, tasks, projects and databases. There is no account and no Skele server: everything you write stays on your device.",

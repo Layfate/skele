@@ -8,11 +8,11 @@
 // build can never be published by accident. With --updater, signed updater files (.sig) are
 // required too.
 //
-// Names (VERSION = package.json version):
-//   Windows  Skele_VERSION_x64-setup.exe · Skele_VERSION_x64.msi · Skele_VERSION_x64-portable.zip
-//   macOS    Skele_VERSION_macos-arm64.dmg · Skele_VERSION_macos-arm64.zip (the .app)
-//            Skele_VERSION_macos-arm64.app.tar.gz (in-app updater package, not for manual install)
-//   Linux    Skele_VERSION_linux-x64.AppImage · .deb · .rpm · .tar.gz (binary + desktop entry)
+// Names (VERSION = package.json version; ARCH = x86_64 or arm64):
+//   Windows  Skele-VERSION-windows-ARCH.exe (installer) · .msi · .zip (portable)
+//   macOS    Skele-VERSION-macos-ARCH.dmg · .zip (the .app)
+//            Skele-VERSION-macos-ARCH.app.tar.gz (in-app updater package, not for manual install)
+//   Linux    Skele-VERSION-linux-ARCH.AppImage · .deb · .rpm · .tar.gz (binary + desktop entry)
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
@@ -47,7 +47,8 @@ rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
 const rustArch = arch === "x64" ? "x86_64" : "aarch64";
-const prefix = platform === "windows" ? `Skele_${version}_${arch}` : `Skele_${version}_${platform}-${arch}`;
+const fileArch = (a) => (a === "x64" ? "x86_64" : "arm64");
+const prefix = `Skele-${version}-${platform}-${fileArch(arch)}`;
 const problems = [];
 const files = [];
 const updater = [];
@@ -95,7 +96,7 @@ function zipFolder(folder, zipPath) {
 const license = readFileSync(path.join(root, "LICENSE"), "utf8");
 
 if (platform === "windows") {
-  take(findOne("nsis", (f) => f.endsWith("-setup.exe"), "NSIS installer"), `${prefix}-setup.exe`, "Installer (recommended)", [
+  take(findOne("nsis", (f) => f.endsWith("-setup.exe"), "NSIS installer"), `${prefix}.exe`, "Installer (recommended)", [
     `windows-${rustArch}`,
     `windows-${rustArch}-nsis`,
   ]);
@@ -106,7 +107,7 @@ if (platform === "windows") {
   const exe = path.join(releaseDir, "skele.exe");
   if (!existsSync(exe)) problems.push(`portable: ${path.relative(root, exe)} not found`);
   else {
-    const folder = path.join(work, `${prefix}-portable`);
+    const folder = path.join(work, prefix);
     mkdirSync(folder, { recursive: true });
     copyFileSync(exe, path.join(folder, "Skele.exe"));
     writeFileSync(
@@ -138,7 +139,7 @@ if (platform === "windows") {
       ].join("\r\n"),
     );
     writeFileSync(path.join(folder, "LICENSE.txt"), license.replace(/\r?\n/g, "\r\n"));
-    const zip = path.join(out, `${prefix}-portable.zip`);
+    const zip = path.join(out, `${prefix}.zip`);
     zipFolder(folder, zip);
     files.push({ file: path.basename(zip), label: "Portable (no installation)", size: statSync(zip).size });
   }

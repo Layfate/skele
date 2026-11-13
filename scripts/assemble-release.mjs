@@ -145,7 +145,7 @@ const body = [
   "shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS",
   "```",
   "",
-  "On Windows (PowerShell): `Get-FileHash .\\" + (rows.length ? `Skele_${version}_x64-setup.exe` : "file") + "` and compare it with the line in `SHA256SUMS.txt`.",
+  "On Windows (PowerShell): `Get-FileHash .\\" + (rows.length ? `Skele-${version}-windows-x86_64.exe` : "file") + "` and compare it with the line in `SHA256SUMS.txt`.",
   missingOptional.length
     ? [
         "",

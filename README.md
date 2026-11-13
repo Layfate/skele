@@ -38,16 +38,16 @@ code-signed.
 
 | System | Download | Notes |
 |---|---|---|
-| **Windows 10/11 (x64)** | `Skele_<version>_x64-setup.exe` | Installer (recommended): per-user install, Start menu shortcut, uninstaller |
-| | `Skele_<version>_x64.msi` | For managed/enterprise deployment (per-machine) |
-| | `Skele_<version>_x64-portable.zip` | Portable: unzip and run, data stays in the folder |
-| **Windows (ARM64)** | `Skele_<version>_arm64-setup.exe`, `…_arm64-portable.zip` | When the release includes them (best-effort build) |
-| **macOS 11+ (Apple Silicon)** | `Skele_<version>_macos-arm64.dmg` / `.zip` | M1 and later |
-| **macOS 11+ (Intel)** | `Skele_<version>_macos-x64.dmg` / `.zip` | |
-| **Linux (x64)** | `Skele_<version>_linux-x64.AppImage` | Portable, most distributions |
-| | `Skele_<version>_linux-x64.deb` | Debian, Ubuntu, Mint, Pop!_OS |
-| | `Skele_<version>_linux-x64.rpm` | Fedora, RHEL, openSUSE |
-| | `Skele_<version>_linux-x64.tar.gz` | Standalone binary + desktop entry |
+| **Windows 10/11 (x64)** | `Skele-<version>-windows-x86_64.exe` | Installer (recommended): per-user install, Start menu shortcut, uninstaller |
+| | `Skele-<version>-windows-x86_64.msi` | For managed/enterprise deployment (per-machine) |
+| | `Skele-<version>-windows-x86_64.zip` | Portable: unzip and run, data stays in the folder |
+| **Windows (ARM64)** | `Skele-<version>-windows-arm64.exe` / `.zip` | When the release includes them (best-effort build) |
+| **macOS 11+ (Apple Silicon)** | `Skele-<version>-macos-arm64.dmg` / `.zip` | M1 and later |
+| **macOS 11+ (Intel)** | `Skele-<version>-macos-x86_64.dmg` / `.zip` | |
+| **Linux (x64)** | `Skele-<version>-linux-x86_64.AppImage` | Portable, most distributions |
+| | `Skele-<version>-linux-x86_64.deb` | Debian, Ubuntu, Mint, Pop!_OS |
+| | `Skele-<version>-linux-x86_64.rpm` | Fedora, RHEL, openSUSE |
+| | `Skele-<version>-linux-x86_64.tar.gz` | Standalone binary + desktop entry |
 | **Linux (ARM64)** | the same four with `linux-arm64` | When the release includes them (best-effort build) |
 
 Files ending in `.app.tar.gz` and `.sig`, and `latest.json`, are used by the in-app updater.
@@ -55,7 +55,7 @@ You don't need to download them.
 
 ### Windows
 
-1. Download `Skele_<version>_x64-setup.exe` and run it. It installs for your user account, so no
+1. Download `Skele-<version>-windows-x86_64.exe` and run it. It installs for your user account, so no
    administrator rights are needed, and adds a Start menu entry. You can choose a desktop
    shortcut at the end.
 2. If the release isn't code-signed, SmartScreen may say *"Windows protected your PC"*. Choose
@@ -67,7 +67,7 @@ You don't need to download them.
 [Where your data lives](#where-your-data-lives)) unless you tick *Delete the application data*
 in the uninstaller.
 
-**Portable:** unzip `Skele_<version>_x64-portable.zip` somewhere you can write to (a USB stick,
+**Portable:** unzip `Skele-<version>-windows-x86_64.zip` somewhere you can write to (a USB stick,
 `Documents`; not `Program Files`) and run `Skele.exe`. All data, including settings and window
 position, goes into the `SkeleData` folder next to it, and nothing is written to your user
 profile. To update, replace `Skele.exe` and keep `SkeleData`. Portable copies don't update
@@ -75,7 +75,7 @@ themselves.
 
 ### macOS
 
-1. Open the `.dmg` for your Mac (Apple Silicon: `macos-arm64`, Intel: `macos-x64`) and drag
+1. Open the `.dmg` for your Mac (Apple Silicon: `macos-arm64`, Intel: `macos-x86_64`) and drag
    Skele to **Applications**.
 2. If the release notes say the build **isn't notarized**, macOS blocks the first launch.
    Right-click Skele in Applications → **Open** → **Open**, or go to **System Settings →
@@ -87,12 +87,12 @@ The `.zip` contains the same `Skele.app` for people who prefer it to a disk imag
 
 ### Linux
 
-- **AppImage:** `chmod +x Skele_*.AppImage && ./Skele_*.AppImage`. On distributions without
+- **AppImage:** `chmod +x Skele-*.AppImage && ./Skele-*.AppImage`. On distributions without
   FUSE 2, install `libfuse2` (Ubuntu 22.04+: `sudo apt install libfuse2`) or run it with
   `--appimage-extract-and-run`.
-- **Debian/Ubuntu:** `sudo apt install ./Skele_<version>_linux-x64.deb` (pulls in WebKitGTK
+- **Debian/Ubuntu:** `sudo apt install ./Skele-<version>-linux-x86_64.deb` (pulls in WebKitGTK
   4.1). Remove with `sudo apt remove skele`.
-- **Fedora/RHEL/openSUSE:** `sudo dnf install ./Skele_<version>_linux-x64.rpm`. Remove with
+- **Fedora/RHEL/openSUSE:** `sudo dnf install ./Skele-<version>-linux-x86_64.rpm`. Remove with
   `sudo dnf remove skele`.
 - **tar.gz:** extract and run `./skele`. It needs `webkit2gtk-4.1` and `gtk3` from your
   distribution. `README.txt` inside explains the optional menu entry and portable mode.
