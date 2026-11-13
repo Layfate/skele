@@ -1,0 +1,525 @@
+// Skele data model.
+// Conventions:
+//  • Every content table carries workspaceId so authorisation is a single indexed check.
+//  • `rank` columns hold fractional-index strings (see src/lib/rank.ts); order by rank ASC.
+//  • Soft delete = archivedAt. Permanent delete cascades.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pg_trgm]
+}
+
+// ───────────────────────────── Auth (Better Auth) ─────────────────────────────
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+  memberships WorkspaceMember[]
+  preferences UserPreferences?
+  favorites   Favorite[]
+  visits      PageVisit[]
+
+  pagesCreated    Page[]           @relation("PageCreatedBy")
+  tasksAssigned   Task[]           @relation("TaskAssignee")
+  tasksCreated    Task[]           @relation("TaskCreatedBy")
+  projectsLed     Project[]        @relation("ProjectLead")
+  projectsCreated Project[]        @relation("ProjectCreatedBy")
+  comments        TaskComment[]
+  files           FileAttachment[]
+  activity        ActivityLog[]
+  invitationsSent Invitation[]
+  recordsCreated  DatabaseRecord[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rate_limit")
+}
+
+model UserPreferences {
+  userId          String   @id
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme           String   @default("system") // light | dark | system
+  accent          String   @default("indigo")
+  fontSize        String   @default("default") // small | default | large
+  lastWorkspaceId String?
+  /// Ordered widget ids + hidden flags for the home dashboard.
+  dashboard       Json     @default("{}")
+  /// Per-workspace quick note text: { [workspaceId]: string }
+  quickNotes      Json     @default("{}")
+  recentSearches  Json     @default("[]")
+  notifications   Json     @default("{}")
+  updatedAt       DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+// ───────────────────────────── Workspaces ─────────────────────────────
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  icon      String? // emoji
+  color     String   @default("indigo")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members     WorkspaceMember[]
+  invitations Invitation[]
+  pages       Page[]
+  projects    Project[]
+  tasks       Task[]
+  labels      Label[]
+  comments    TaskComment[]
+  databases   Database[]
+  records     DatabaseRecord[]
+  files       FileAttachment[]
+  activity    ActivityLog[]
+  favorites   Favorite[]
+  visits      PageVisit[]
+
+  @@map("workspace")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_member")
+}
+
+model Invitation {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+  token       String        @unique
+  invitedById String?
+  invitedBy   User?         @relation(fields: [invitedById], references: [id], onDelete: SetNull)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([workspaceId])
+  @@index([email])
+  @@map("invitation")
+}
+
+// ───────────────────────────── Pages ─────────────────────────────
+
+enum PageKind {
+  DOCUMENT
+  DATABASE
+}
+
+model Page {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parentId       String?
+  parent         Page?     @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children       Page[]    @relation("PageTree")
+  kind           PageKind  @default(DOCUMENT)
+  title          String    @default("")
+  icon           String?
+  cover          String? // "preset:<name>" or a file URL
+  coverPosition  Int       @default(50) // vertical object-position %
+  rank           String
+  /// Workspace-wide pin (shown above the tree for everyone).
+  pinned         Boolean   @default(false)
+  fullWidth      Boolean   @default(false)
+  createdById    String?
+  createdBy      User?     @relation("PageCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  archivedAt     DateTime?
+  /// The page whose archive action archived this one (for subtree restore).
+  archivedRootId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  content   PageContent?
+  database  Database?
+  favorites Favorite[]
+  visits    PageVisit[]
+  files     FileAttachment[]
+
+  @@index([workspaceId, parentId, archivedAt, rank])
+  @@index([workspaceId, archivedAt])
+  @@index([archivedRootId])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("page")
+}
+
+model PageContent {
+  pageId    String   @id
+  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  /// Tiptap JSON document.
+  doc       Json     @default("{\"type\":\"doc\",\"content\":[]}")
+  /// Plain-text projection used for search.
+  text      String   @default("")
+  /// Optimistic concurrency counter — incremented on every save.
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@index([text(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("page_content")
+}
+
+model Favorite {
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pageId      String
+  page        Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([userId, pageId])
+  @@index([userId, workspaceId])
+  @@map("favorite")
+}
+
+model PageVisit {
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pageId      String
+  page        Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  visitedAt   DateTime  @default(now())
+
+  @@id([userId, pageId])
+  @@index([userId, workspaceId, visitedAt])
+  @@map("page_visit")
+}
+
+// ───────────────────────────── Projects & tasks ─────────────────────────────
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String        @default("")
+  icon        String?
+  color       String        @default("indigo")
+  status      ProjectStatus @default(ACTIVE)
+  startDate   DateTime?
+  targetDate  DateTime?
+  leadId      String?
+  lead        User?         @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
+  rank        String
+  createdById String?
+  createdBy   User?         @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  archivedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  tasks Task[]
+
+  @@index([workspaceId, archivedAt, rank])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("project")
+}
+
+model Label {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  color       String    @default("gray")
+  tasks       Task[]
+
+  @@unique([workspaceId, name])
+  @@map("label")
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  workspaceId String
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      Task?        @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks    Task[]       @relation("Subtasks")
+  title       String
+  /// Plain text description (rendered with line breaks).
+  description String       @default("")
+  status      TaskStatus   @default(NOT_STARTED)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+  assigneeId  String?
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  rank        String
+  completedAt DateTime?
+  createdById String?
+  createdBy   User?        @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  labels   Label[]
+  comments TaskComment[]
+
+  @@index([workspaceId, assigneeId, status])
+  @@index([workspaceId, dueDate])
+  @@index([projectId, status, rank])
+  @@index([parentId])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("task")
+}
+
+model TaskComment {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  authorId    String?
+  author      User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([taskId, createdAt])
+  @@map("task_comment")
+}
+
+// ───────────────────────────── Databases ─────────────────────────────
+
+enum PropertyType {
+  TEXT
+  NUMBER
+  SELECT
+  MULTI_SELECT
+  CHECKBOX
+  DATE
+  URL
+  EMAIL
+  PERSON
+  STATUS
+}
+
+enum DatabaseViewType {
+  TABLE
+  BOARD
+  CALENDAR
+  GALLERY
+  LIST
+}
+
+model Database {
+  id          String    @id @default(cuid())
+  pageId      String    @unique
+  page        Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  properties DatabaseProperty[]
+  records    DatabaseRecord[]
+  views      DatabaseView[]
+
+  @@index([workspaceId])
+  @@map("database")
+}
+
+model DatabaseProperty {
+  id         String       @id @default(cuid())
+  databaseId String
+  database   Database     @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  name       String
+  type       PropertyType
+  /// Type-specific options, e.g. { options: [{ id, name, color }] } for selects.
+  config     Json         @default("{}")
+  rank       String
+  createdAt  DateTime     @default(now())
+
+  @@index([databaseId, rank])
+  @@map("database_property")
+}
+
+model DatabaseRecord {
+  id          String    @id @default(cuid())
+  databaseId  String
+  database    Database  @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title       String    @default("")
+  icon        String?
+  /// { [propertyId]: value } validated against DatabaseProperty definitions.
+  values      Json      @default("{}")
+  /// Tiptap JSON body shown when the record is opened as a page.
+  doc         Json      @default("{\"type\":\"doc\",\"content\":[]}")
+  text        String    @default("")
+  version     Int       @default(0)
+  rank        String
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([databaseId, rank])
+  @@index([workspaceId])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("database_record")
+}
+
+model DatabaseView {
+  id         String           @id @default(cuid())
+  databaseId String
+  database   Database         @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  name       String
+  type       DatabaseViewType
+  /// { filters, sorts, groupBy, dateProperty, hiddenProperties, … }
+  config     Json             @default("{}")
+  rank       String
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([databaseId, rank])
+  @@map("database_view")
+}
+
+// ───────────────────────────── Files & activity ─────────────────────────────
+
+model FileAttachment {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pageId       String?
+  page         Page?     @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  uploadedById String?
+  uploadedBy   User?     @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  name         String
+  mimeType     String
+  size         Int
+  storageKey   String    @unique
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([pageId])
+  @@map("file_attachment")
+}
+
+model ActivityLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId     String?
+  actor       User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action      String // e.g. "page.created", "task.status_changed"
+  entityType  String
+  entityId    String
+  meta        Json      @default("{}")
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([entityType, entityId])
+  @@map("activity_log")
+}

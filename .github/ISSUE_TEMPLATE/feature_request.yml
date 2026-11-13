@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an idea for Skele
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to happen?
+  - type: checkboxes
+    id: local
+    attributes:
+      label: Local-first
+      options:
+        - label: This works without an account, a server, or sending my data anywhere by default.

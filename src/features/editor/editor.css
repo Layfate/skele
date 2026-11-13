@@ -1,0 +1,223 @@
+/* Skele editor typography. Scoped to .skele-prose so it never leaks into app chrome. */
+
+.skele-prose {
+  font-size: var(--editor-font-size, 16px);
+  line-height: 1.65;
+  color: var(--foreground);
+  outline: none;
+  min-height: 12rem;
+  padding-bottom: 30vh;
+  caret-color: var(--brand);
+  word-wrap: break-word;
+}
+
+.skele-prose > * + * { margin-top: 0.35em; }
+.skele-prose p { margin: 0; min-height: 1.65em; }
+
+.skele-prose h1, .skele-prose h2, .skele-prose h3 {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+.skele-prose h1 { font-size: 1.85em; margin-top: 1.1em; }
+.skele-prose h2 { font-size: 1.45em; margin-top: 1em; }
+.skele-prose h3 { font-size: 1.2em; margin-top: 0.9em; }
+.skele-prose > :first-child { margin-top: 0; }
+
+.skele-prose a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, var(--foreground) 35%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.skele-prose a:hover { text-decoration-color: var(--brand); }
+
+.skele-prose strong { font-weight: 650; }
+
+.skele-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.15em 0.35em;
+  border-radius: 5px;
+  background: var(--muted);
+  color: var(--tc-red);
+}
+
+.skele-prose ul, .skele-prose ol { padding-left: 1.6em; }
+.skele-prose ul { list-style: disc; }
+.skele-prose ul ul { list-style: circle; }
+.skele-prose ol { list-style: decimal; }
+.skele-prose li { margin: 0.15em 0; }
+.skele-prose li::marker { color: var(--muted-foreground); }
+
+/* To-do lists */
+.skele-prose ul[data-type="taskList"] { list-style: none; padding-left: 0.15em; }
+.skele-prose ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5em; }
+.skele-prose ul[data-type="taskList"] li > label { margin-top: 0.3em; user-select: none; flex-shrink: 0; }
+.skele-prose ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+.skele-prose ul[data-type="taskList"] input[type="checkbox"] {
+  appearance: none;
+  width: 1em;
+  height: 1em;
+  border: 1.5px solid color-mix(in oklch, var(--foreground) 40%, transparent);
+  border-radius: 4px;
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.skele-prose ul[data-type="taskList"] input[type="checkbox"]:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.skele-prose ul[data-type="taskList"] input[type="checkbox"]:checked::after {
+  content: "";
+  width: 0.55em;
+  height: 0.3em;
+  border-left: 2px solid var(--brand-foreground);
+  border-bottom: 2px solid var(--brand-foreground);
+  transform: translateY(-0.05em) rotate(-45deg);
+}
+.skele-prose ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklch, var(--foreground) 30%, transparent);
+}
+
+.skele-prose blockquote {
+  border-left: 3px solid var(--foreground);
+  padding-left: 0.9em;
+  margin-left: 0.1em;
+}
+
+.skele-prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+  cursor: pointer;
+}
+.skele-prose hr.ProseMirror-selectednode { border-top-color: var(--brand); }
+
+/* Code blocks + lowlight */
+.skele-prose pre {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  line-height: 1.6;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9em 1.1em;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.skele-prose pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+.skele-prose .hljs-comment, .skele-prose .hljs-quote { color: var(--muted-foreground); font-style: italic; }
+.skele-prose .hljs-keyword, .skele-prose .hljs-selector-tag, .skele-prose .hljs-built_in { color: var(--tc-purple); }
+.skele-prose .hljs-string, .skele-prose .hljs-attr, .skele-prose .hljs-regexp { color: var(--tc-green); }
+.skele-prose .hljs-number, .skele-prose .hljs-literal { color: var(--tc-orange); }
+.skele-prose .hljs-title, .skele-prose .hljs-function, .skele-prose .hljs-section { color: var(--tc-blue); }
+.skele-prose .hljs-variable, .skele-prose .hljs-template-variable, .skele-prose .hljs-type { color: var(--tc-red); }
+
+/* Images */
+.skele-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 0.4em 0;
+}
+.skele-prose img.ProseMirror-selectednode { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Tables */
+.skele-prose .tableWrapper { overflow-x: auto; margin: 0.6em 0; }
+.skele-prose table { border-collapse: collapse; table-layout: fixed; width: 100%; overflow: hidden; }
+.skele-prose th, .skele-prose td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+  position: relative;
+  min-width: 4em;
+}
+.skele-prose th { background: var(--muted); font-weight: 600; text-align: left; }
+.skele-prose .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--brand-soft);
+  pointer-events: none;
+}
+.skele-prose .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--brand);
+  pointer-events: none;
+}
+.skele-prose.resize-cursor { cursor: col-resize; }
+
+/* Toggle (details) */
+.skele-prose .details { display: flex; gap: 0.25em; margin: 0.25em 0; }
+.skele-prose .details > button {
+  flex-shrink: 0;
+  width: 1.5em;
+  height: 1.65em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.skele-prose .details > button:hover { background: var(--accent); }
+.skele-prose .details > button::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 0.38em solid var(--muted-foreground);
+  border-top: 0.28em solid transparent;
+  border-bottom: 0.28em solid transparent;
+  transition: transform 150ms;
+}
+.skele-prose .details.is-open > button::before { transform: rotate(90deg); }
+.skele-prose .details > div { flex: 1; min-width: 0; }
+.skele-prose .details summary { list-style: none; font-weight: 500; }
+.skele-prose .details summary::-webkit-details-marker { display: none; }
+.skele-prose .details [data-type="detailsContent"] { padding-left: 0.1em; }
+.skele-prose .details:not(.is-open) [data-type="detailsContent"] { display: none; }
+
+/* Callouts (also used for the colour swatches in the callout menu) */
+.callout { background: color-mix(in oklch, var(--foreground) 5%, transparent); }
+.callout[data-color="indigo"] { background: color-mix(in oklch, oklch(0.55 0.2 277) 11%, transparent); }
+.callout[data-color="blue"] { background: color-mix(in oklch, oklch(0.58 0.17 252) 11%, transparent); }
+.callout[data-color="green"] { background: color-mix(in oklch, oklch(0.6 0.15 152) 12%, transparent); }
+.callout[data-color="amber"] { background: color-mix(in oklch, oklch(0.75 0.15 80) 16%, transparent); }
+.callout[data-color="rose"] { background: color-mix(in oklch, oklch(0.6 0.2 18) 11%, transparent); }
+
+/* Placeholders */
+.skele-prose .is-empty::before,
+.skele-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+}
+
+.skele-prose mark { border-radius: 3px; padding: 0 0.1em; color: inherit; }
+
+.skele-prose .ProseMirror-gapcursor::after { border-top-color: var(--brand); }
+
+/* Drag handle */
+.skele-drag-handle {
+  transition: opacity 120ms;
+  cursor: grab;
+  z-index: 10;
+}
+.skele-drag-handle:active { cursor: grabbing; }
+.ProseMirror-hideselection .skele-drag-handle { opacity: 0; }
+
+@media (max-width: 767px) {
+  .skele-drag-handle { display: none; }
+}

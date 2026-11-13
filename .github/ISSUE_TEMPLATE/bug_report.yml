@@ -1,0 +1,46 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **don't paste private notes or personal data.** Reproduce with the sample workspace or a minimal example if you can.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the sample workspace
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where are you running Skele?
+      options:
+        - Browser (dev server)
+        - Browser (hosted / static build)
+        - Installed web app (PWA)
+        - Desktop app
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Browser / OS and Skele version
+      placeholder: Chrome 140 on Windows 11, Skele 0.1.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console errors
+      description: Anything red in the browser developer console (F12).
+      render: text

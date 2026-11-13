@@ -1,0 +1,106 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Skele",
+  "mainBinaryName": "skele",
+  "version": "../package.json",
+  "identifier": "dev.skele.desktop",
+  "build": {
+    "devUrl": "http://127.0.0.1:3000",
+    "frontendDist": "../out",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Skele",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 480,
+        "center": true,
+        "create": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' blob: data: https:",
+        "media-src": "'self' blob: data:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://api.spotify.com https://accounts.spotify.com",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Skele contributors",
+    "copyright": "Copyright © 2026 Skele contributors. MIT License.",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "category": "Productivity",
+    "shortDescription": "A calm, local-first workspace for notes, tasks, projects and databases",
+    "longDescription": "Skele is a free, open-source, local-first workspace for notes, tasks, projects and databases. There is no account and no Skele server: everything you write stays on your device.",
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Skele",
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": "en-US"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "dmg": {
+        "windowSize": { "width": 660, "height": 400 },
+        "appPosition": { "x": 180, "y": 200 },
+        "applicationFolderPosition": { "x": 480, "y": 200 }
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "utils",
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      },
+      "rpm": {
+        "release": "1",
+        "depends": ["webkit2gtk4.1", "gtk3"]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZBRTA4MzJFM0M5ODgxREUKUldUZWdaZzhMb1BnYXNQSkVia20rVEtZcFROQ09UYXJKV0tkNzdmVCtLVU0zUXRmQjdCZGVyWFYK",
+      "endpoints": [],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Window-state persistence (desktop platforms only).",
+  "platforms": ["windows", "macOS", "linux"],
+  "windows": ["main"],
+  "permissions": ["window-state:default"]
+}

@@ -1,0 +1,290 @@
+name: Build desktop apps
+
+# Builds Skele for every supported platform, smoke-tests what it can, renames the outputs to
+# Skele's release names (scripts/collect-artifacts.mjs) and uploads them as workflow artifacts.
+# release.yml calls this workflow for tagged releases; it also runs by hand and on changes to
+# the desktop shell.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Building a release (signed updater files are required)
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/**"
+      - "scripts/collect-artifacts.mjs"
+      - "scripts/ci-config.mjs"
+      - "scripts/smoke-test.mjs"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow_ref }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    # ARM64 Windows and Linux are best-effort: if they fail, the release says so and ships
+    # without them. Every other target must succeed.
+    continue-on-error: ${{ matrix.optional }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-latest
+            platform: windows
+            arch: x64
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+            native: true
+            optional: false
+          - name: windows-arm64
+            runner: windows-latest
+            platform: windows
+            arch: arm64
+            target: aarch64-pc-windows-msvc
+            # WiX (MSI) can't target ARM64; NSIS and the portable zip can. Cross-compiled, so
+            # it can't be launched on this runner.
+            bundles: nsis
+            native: false
+            optional: true
+          - name: macos-arm64
+            runner: macos-latest
+            platform: macos
+            arch: arm64
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            native: true
+            optional: false
+          - name: macos-x64
+            runner: macos-15-intel
+            platform: macos
+            arch: x64
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+            native: true
+            optional: false
+          - name: linux-x64
+            # The oldest supported Ubuntu runner: binaries built against its glibc (2.35) and
+            # WebKitGTK 4.1 run on that and newer distributions.
+            runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            native: true
+            optional: false
+          - name: linux-arm64
+            runner: ubuntu-22.04-arm
+            platform: linux
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            native: true
+            optional: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: System libraries (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb file
+
+      - run: npm ci
+
+      # ── Signing: everything comes from repository secrets; nothing is hardcoded. ──
+      - name: Signing configuration
+        id: signing
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          updater=false; macos=false; notarize=false; windows=false
+          [ -n "$UPDATER_KEY" ] && updater=true
+          if [ "${{ inputs.release }}" = "true" ] && [ "$updater" != "true" ]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set: this release will have no in-app update files."
+          fi
+          if [ "${{ matrix.platform }}" = "macos" ] && [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            macos=true
+            # Only exported when set: the Tauri CLI treats an empty variable as a value.
+            for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY; do echo "$v=${!v}" >> "$GITHUB_ENV"; done
+            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+              notarize=true
+              for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do echo "$v=${!v}" >> "$GITHUB_ENV"; done
+            fi
+          fi
+          [ "${{ matrix.platform }}" = "windows" ] && [ -n "$WINDOWS_CERTIFICATE" ] && windows=true
+          echo "updater=$updater" >> "$GITHUB_OUTPUT"
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
+          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+          echo "Updater signing: $updater · Apple Developer ID: $macos · notarization: $notarize · Authenticode: $windows"
+
+      - name: Import Authenticode certificate (Windows)
+        if: steps.signing.outputs.windows == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "certificate.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $path
+          "WINDOWS_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build configuration
+        shell: bash
+        env:
+          SKELE_REPOSITORY: ${{ github.repository }}
+          UPDATER_SIGNED: ${{ steps.signing.outputs.updater }}
+          MACOS_SIGNED: ${{ steps.signing.outputs.macos }}
+        run: node scripts/ci-config.mjs
+
+      - name: Build
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NEXT_PUBLIC_SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
+          # No FUSE on the runners; linuxdeploy (AppImage) extracts itself instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json
+
+      - name: Collect and verify artifacts
+        shell: bash
+        run: node scripts/collect-artifacts.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target ${{ matrix.target }} ${{ steps.signing.outputs.updater == 'true' && '--updater' || '' }}
+
+      # ── Smoke tests: launch what was built and check it opens its database. ──
+      - name: Smoke test (Windows executable, installers, portable zip)
+        if: matrix.platform == 'windows' && matrix.native
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $v = node scripts/version.mjs current
+          node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele.exe"
+          if ($LASTEXITCODE) { throw "executable failed" }
+
+          # Portable zip: data must land in SkeleData next to Skele.exe, nowhere else.
+          $portable = Join-Path $env:RUNNER_TEMP "portable"
+          Expand-Archive "dist/Skele_${v}_${{ matrix.arch }}-portable.zip" $portable
+          $exe = Get-ChildItem $portable -Recurse -Filter Skele.exe | Select-Object -First 1
+          node scripts/smoke-test.mjs --exe $exe.FullName --portable
+          if ($LASTEXITCODE) { throw "portable failed" }
+          if (Test-Path "$env:APPDATA\dev.skele.desktop") { throw "portable copy wrote to %APPDATA%" }
+
+          # NSIS: silent per-user install → launch with the default data folder → uninstall →
+          # the data folder must survive.
+          $data = "$env:APPDATA\dev.skele.desktop"
+          Start-Process "dist/Skele_${v}_${{ matrix.arch }}-setup.exe" -ArgumentList "/S" -Wait
+          $installed = "$env:LOCALAPPDATA\Skele\skele.exe"
+          if (!(Test-Path $installed)) { Get-ChildItem "$env:LOCALAPPDATA\Skele" -ErrorAction SilentlyContinue; throw "NSIS didn't install $installed" }
+          if (!(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Skele*" )) { Write-Warning "No Start menu shortcut found" }
+          node scripts/smoke-test.mjs --exe $installed --data-dir $data
+          if ($LASTEXITCODE) { throw "installed app failed" }
+          Start-Process "$env:LOCALAPPDATA\Skele\uninstall.exe" -ArgumentList "/S" -Wait
+          Start-Sleep 5
+          if (Test-Path $installed) { throw "NSIS uninstall left the app behind" }
+          if (!(Test-Path "$data\skele.sqlite3")) { throw "Uninstall deleted user data" }
+
+          # MSI: install → launch → uninstall.
+          if ("${{ matrix.arch }}" -eq "x64") {
+            $msi = (Resolve-Path "dist/Skele_${v}_x64.msi").Path
+            Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
+            $exe = Get-ChildItem "$env:ProgramFiles\Skele" -Filter skele.exe -Recurse | Select-Object -First 1
+            if (!$exe) { throw "MSI didn't install skele.exe" }
+            node scripts/smoke-test.mjs --exe $exe.FullName --data-dir $data
+            if ($LASTEXITCODE) { throw "MSI-installed app failed" }
+            Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /norestart" -Wait
+            if (Test-Path $exe.FullName) { throw "MSI uninstall left the app behind" }
+            if (!(Test-Path "$data\skele.sqlite3")) { throw "MSI uninstall deleted user data" }
+          }
+
+      - name: Smoke test (macOS app and DMG)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(node scripts/version.mjs current)
+          node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele"
+          mount=$(hdiutil attach -nobrowse -readonly "dist/Skele_${v}_macos-${{ matrix.arch }}.dmg" | tail -1 | awk -F'\t' '{print $NF}')
+          ls "$mount"
+          test -L "$mount/Applications" || echo "::warning::DMG has no Applications link"
+          node scripts/smoke-test.mjs --exe "$mount/Skele.app/Contents/MacOS/skele"
+          hdiutil detach "$mount"
+          codesign --verify --deep --verbose=2 "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app"
+          unzip -q "dist/Skele_${v}_macos-${{ matrix.arch }}.zip" -d "$RUNNER_TEMP/zip"
+          codesign --verify --deep "$RUNNER_TEMP/zip/Skele.app"
+
+      - name: Smoke test (Linux binary, AppImage, .deb, .rpm, tarball)
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          v=$(node scripts/version.mjs current)
+          xvfb-run -a node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele"
+          chmod +x "dist/Skele_${v}_linux-${{ matrix.arch }}.AppImage"
+          xvfb-run -a node scripts/smoke-test.mjs --exe "dist/Skele_${v}_linux-${{ matrix.arch }}.AppImage"
+          # .deb: install with its declared dependencies, launch, check the desktop entry, remove.
+          sudo apt-get install -y "./dist/Skele_${v}_linux-${{ matrix.arch }}.deb"
+          test -x /usr/bin/skele
+          ls /usr/share/applications/ | grep -i skele
+          xvfb-run -a node scripts/smoke-test.mjs --exe /usr/bin/skele
+          sudo apt-get remove -y skele
+          test ! -e /usr/bin/skele
+          # .rpm: dependencies must resolve on Fedora.
+          docker run --rm -v "$PWD/dist:/dist" fedora:41 bash -c "dnf install -y /dist/Skele_${v}_linux-${{ matrix.arch }}.rpm && test -x /usr/bin/skele && dnf remove -y skele"
+          # Tarball: the extracted binary runs.
+          mkdir -p "$RUNNER_TEMP/tar" && tar -xzf "dist/Skele_${v}_linux-${{ matrix.arch }}.tar.gz" -C "$RUNNER_TEMP/tar"
+          xvfb-run -a node scripts/smoke-test.mjs --exe "$RUNNER_TEMP/tar/Skele_${v}_linux-${{ matrix.arch }}/skele"
+
+      - name: Record signing status
+        shell: bash
+        run: |
+          cat > "dist/signing-${{ matrix.name }}.json" <<EOF
+          {"updater": ${{ steps.signing.outputs.updater }}, "macos": ${{ steps.signing.outputs.macos }}, "notarized": ${{ steps.signing.outputs.notarize }}, "windows": ${{ steps.signing.outputs.windows }}}
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skele-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

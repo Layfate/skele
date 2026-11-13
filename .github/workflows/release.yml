@@ -1,0 +1,98 @@
+name: Release
+
+# Push a version tag (v1.0.0, v1.1.0, v2.0.0-beta.1 …) to publish a GitHub release:
+#   validate the version → run CI → build every platform → verify and checksum the artifacts
+#   → publish them with release notes from CHANGELOG.md and in-app update metadata.
+# Only artifacts that were built and verified in this run are published. A failed required
+# platform stops the release; a failed optional (ARM64) platform is named in the notes.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tag, package.json, Cargo.toml and CHANGELOG.md agree
+        run: node scripts/version.mjs check "${{ github.ref_name }}"
+
+  test:
+    name: Tests
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build
+    needs: test
+    uses: ./.github/workflows/build.yml
+    with:
+      release: true
+    secrets: inherit
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: skele-*
+          path: artifacts
+
+      - name: Signing status
+        id: signing
+        run: |
+          all() { jq -s "map(.$1) | all" artifacts/*/signing-*$2*.json 2>/dev/null || echo false; }
+          echo "windows=$(all windows windows)" >> "$GITHUB_OUTPUT"
+          echo "macos=$(all notarized macos)" >> "$GITHUB_OUTPUT"
+          echo "updater=$(all updater '')" >> "$GITHUB_OUTPUT"
+
+      - name: Verify artifacts, checksums, update metadata, notes
+        env:
+          WINDOWS_SIGNED: ${{ steps.signing.outputs.windows }}
+          MACOS_NOTARIZED: ${{ steps.signing.outputs.macos }}
+          UPDATER_SIGNED: ${{ steps.signing.outputs.updater }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node scripts/assemble-release.mjs \
+            --in artifacts --out release \
+            --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+            --required windows-x64,macos-arm64,macos-x64,linux-x64 \
+            --optional windows-arm64,linux-arm64
+          ls -la release
+          cat release/release-notes.md
+
+      # Created as a draft first, so nobody (and no updater) sees a half-uploaded release.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          [[ "$TAG" == *-* ]] && prerelease="--prerelease"
+          files=$(find release -type f ! -name release-notes.md | sort)
+          gh release create "$TAG" --draft --verify-tag $prerelease \
+            --title "Skele ${TAG#v}" --notes-file release/release-notes.md $files
+          gh release edit "$TAG" --draft=false
+          echo "Published https://github.com/${{ github.repository }}/releases/tag/$TAG"

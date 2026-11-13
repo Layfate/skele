@@ -1,0 +1,39 @@
+[package]
+name = "skele"
+version = "0.1.0"
+description = "Skele: a calm, local-first workspace for notes, tasks, projects and databases"
+authors = ["Skele contributors"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "skele_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+# SQLite is compiled in ("bundled"), so no platform needs a system SQLite library.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-window-state = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
