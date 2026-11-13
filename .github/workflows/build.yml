@@ -51,13 +51,15 @@ jobs:
             native: true
             optional: false
           - name: macos-arm64
-            runner: macos-latest
+            # Cross-compiled on Intel: GitHub's Apple Silicon runners are often out of capacity.
+            # The app can't be launched here; the smoke test checks it's arm64 and signed.
+            runner: macos-15-intel
             platform: macos
             arch: arm64
             file_arch: arm64
             target: aarch64-apple-darwin
             bundles: app,dmg
-            native: true
+            native: false
             optional: false
           - name: macos-x64
             runner: macos-15-intel
@@ -70,7 +72,8 @@ jobs:
             optional: false
           - name: macos-universal
             # One app for Apple Silicon and Intel (both slices, lipo'd by Tauri). DMG only.
-            runner: macos-latest
+            # Built on Intel (see macos-arm64); the x86_64 slice is launch-tested.
+            runner: macos-15-intel
             platform: macos
             arch: universal
             file_arch: universal
@@ -262,21 +265,27 @@ jobs:
           set -euo pipefail
           v=$(node scripts/version.mjs current)
           name="dist/Skele-v${v}-macos-${{ matrix.file_arch }}"
-          node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele"
+          bin="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele"
+          archs=$(lipo -archs "$bin")
+          echo "Binary slices: $archs"
+          case "${{ matrix.arch }}" in
+            arm64) [[ "$archs" == "arm64" ]] ;;
+            x64) [[ "$archs" == "x86_64" ]] ;;
+            universal) [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] ;;
+          esac || { echo "::error::wrong architecture: $archs"; exit 1; }
+          native="${{ matrix.native }}"
+          [ "$native" = "true" ] && node scripts/smoke-test.mjs --exe "$bin"
           # The DMG must open without a prompt (no license agreement), so attach gets no input.
           mount=$(hdiutil attach -nobrowse -readonly -noautoopen "$name.dmg" < /dev/null | tail -1 | awk -F'\t' '{print $NF}')
           ls "$mount"
           test -L "$mount/Applications" || echo "::warning::DMG has no Applications link"
-          node scripts/smoke-test.mjs --exe "$mount/Skele.app/Contents/MacOS/skele"
+          test -x "$mount/Skele.app/Contents/MacOS/skele"
+          [ "$native" = "true" ] && node scripts/smoke-test.mjs --exe "$mount/Skele.app/Contents/MacOS/skele"
           hdiutil detach "$mount"
           codesign --verify --deep --verbose=2 "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app"
           if [ "${{ matrix.arch }}" != "universal" ]; then
             unzip -q "$name.zip" -d "$RUNNER_TEMP/zip"
             codesign --verify --deep "$RUNNER_TEMP/zip/Skele.app"
-          else
-            archs=$(lipo -archs "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele")
-            echo "Universal binary slices: $archs"
-            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::not a universal binary"; exit 1; }
           fi
 
       - name: Smoke test (Linux binary, AppImage, .deb, .rpm, tarball)
