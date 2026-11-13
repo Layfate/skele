@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-13
+
+First public release.
+
 ### Changed: Skele is now local-first and open source
 
 - **No accounts, no server.** Sign-up, sign-in, sessions, invitations, workspace members and
@@ -21,6 +25,10 @@ All notable changes are listed here. The format follows
 
 ### Added
 
+- Desktop app for Windows, macOS and Linux (Tauri 2): workspaces in SQLite files on disk,
+  installers plus a Windows portable zip that keeps everything in `SkeleData/` beside the
+  executable, native dialogs, single-instance, remembered window size and position, and
+  in-app updates from GitHub Releases. See [docs/DESKTOP.md](docs/DESKTOP.md).
 - `.skele` backup and restore (zip + sha256-checked attachments), import as a new workspace,
   and up to 12 automatic recovery points per workspace.
 - Obsidian-style notes: `[[wiki links]]` with autocomplete, backlinks, unlinked mentions,
