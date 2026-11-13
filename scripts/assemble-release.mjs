@@ -4,7 +4,7 @@
 // and writes SHA256SUMS.txt, latest.json (in-app updater metadata) and the release notes.
 //
 //   node scripts/assemble-release.mjs --in artifacts --out release --tag v1.2.3 --repo owner/name \
-//     --required windows-x64,macos-arm64,macos-x64,linux-x64 --optional windows-arm64,linux-arm64
+//     --required windows-x64,macos-arm64,macos-x64,macos-universal,linux-x64 [--optional …]
 //
 // Env (signing status, for the notes): WINDOWS_SIGNED, MACOS_NOTARIZED, UPDATER_SIGNED = "true"/"false";
 // RUN_URL (link to the workflow run, for missing optional targets).
@@ -41,6 +41,7 @@ const LABELS = {
   "windows-arm64": "Windows (ARM64)",
   "macos-arm64": "macOS (Apple Silicon)",
   "macos-x64": "macOS (Intel)",
+  "macos-universal": "macOS (Universal)",
   "linux-x64": "Linux (x64)",
   "linux-arm64": "Linux (ARM64)",
 };
@@ -145,7 +146,7 @@ const body = [
   "shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS",
   "```",
   "",
-  "On Windows (PowerShell): `Get-FileHash .\\" + (rows.length ? `Skele-${version}-windows-x86_64.exe` : "file") + "` and compare it with the line in `SHA256SUMS.txt`.",
+  "On Windows (PowerShell): `Get-FileHash .\\" + (rows.length ? `Skele-v${version}-windows-x86_64.exe` : "file") + "` and compare it with the line in `SHA256SUMS.txt`.",
   missingOptional.length
     ? [
         "",

@@ -8,11 +8,11 @@
 // build can never be published by accident. With --updater, signed updater files (.sig) are
 // required too.
 //
-// Names (VERSION = package.json version; ARCH = x86_64 or arm64):
-//   Windows  Skele-VERSION-windows-ARCH.exe (installer) · .msi · .zip (portable)
-//   macOS    Skele-VERSION-macos-ARCH.dmg · .zip (the .app)
-//            Skele-VERSION-macos-ARCH.app.tar.gz (in-app updater package, not for manual install)
-//   Linux    Skele-VERSION-linux-ARCH.AppImage · .deb · .rpm · .tar.gz (binary + desktop entry)
+// Names (VERSION = package.json version; ARCH = x86_64, arm64 or universal):
+//   Windows  Skele-vVERSION-windows-x86_64.exe (installer) · .msi · .zip (portable)
+//   macOS    Skele-vVERSION-macos-ARCH.dmg · .zip (the .app; not for universal)
+//            Skele-vVERSION-macos-ARCH.app.tar.gz (in-app updater package, not for manual install)
+//   Linux    Skele-vVERSION-linux-x86_64.AppImage · .deb · .rpm · .tar.gz (binary + desktop entry)
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
@@ -32,8 +32,8 @@ const { values: args } = parseArgs({
 
 const root = path.resolve(import.meta.dirname, "..");
 const { platform, arch, target } = args;
-if (!["windows", "macos", "linux"].includes(platform) || !["x64", "arm64"].includes(arch) || !target) {
-  console.error("Usage: collect-artifacts.mjs --platform windows|macos|linux --arch x64|arm64 --target <rust target triple> [--updater]");
+if (!["windows", "macos", "linux"].includes(platform) || !["x64", "arm64", "universal"].includes(arch) || (arch === "universal" && platform !== "macos") || !target) {
+  console.error("Usage: collect-artifacts.mjs --platform windows|macos|linux --arch x64|arm64|universal --target <rust target triple> [--updater]");
   process.exit(1);
 }
 
@@ -46,9 +46,9 @@ const work = path.join(out, ".work");
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
-const rustArch = arch === "x64" ? "x86_64" : "aarch64";
-const fileArch = (a) => (a === "x64" ? "x86_64" : "arm64");
-const prefix = `Skele-${version}-${platform}-${fileArch(arch)}`;
+const rustArch = arch === "x64" ? "x86_64" : arch === "arm64" ? "aarch64" : "universal";
+const fileArch = (a) => (a === "x64" ? "x86_64" : a);
+const prefix = `Skele-v${version}-${platform}-${fileArch(arch)}`;
 const problems = [];
 const files = [];
 const updater = [];
@@ -149,14 +149,17 @@ if (platform === "macos") {
   take(findOne("dmg", (f) => f.endsWith(".dmg"), "DMG"), `${prefix}.dmg`, "Disk image (recommended)");
   const app = path.join(bundleDir, "macos", "Skele.app");
   if (!existsSync(app)) problems.push(`app bundle: ${path.relative(root, app)} not found`);
-  else {
+  else if (arch !== "universal") {
     // ditto keeps permissions, symlinks and code signatures intact (a plain zip would not).
     const zip = path.join(out, `${prefix}.zip`);
     execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, zip]);
     files.push({ file: path.basename(zip), label: "Zipped Skele.app", size: statSync(zip).size });
   }
+  // The per-architecture builds serve in-app updates; the universal DMG is download-only.
   const updaterPkg = path.join(bundleDir, "macos", "Skele.app.tar.gz");
-  if (existsSync(updaterPkg)) {
+  if (arch === "universal") {
+    // nothing
+  } else if (existsSync(updaterPkg)) {
     take(updaterPkg, `${prefix}.app.tar.gz`, "In-app updater package (not for manual installation)", [`darwin-${rustArch}`, `darwin-${rustArch}-app`]);
   } else if (args.updater) {
     problems.push("Skele.app.tar.gz (updater package) is missing");

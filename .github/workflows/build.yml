@@ -50,17 +50,6 @@ jobs:
             bundles: nsis,msi
             native: true
             optional: false
-          - name: windows-arm64
-            runner: windows-latest
-            platform: windows
-            arch: arm64
-            file_arch: arm64
-            target: aarch64-pc-windows-msvc
-            # WiX (MSI) can't target ARM64; NSIS and the portable zip can. Cross-compiled, so
-            # it can't be launched on this runner.
-            bundles: nsis
-            native: false
-            optional: true
           - name: macos-arm64
             runner: macos-latest
             platform: macos
@@ -79,6 +68,16 @@ jobs:
             bundles: app,dmg
             native: true
             optional: false
+          - name: macos-universal
+            # One app for Apple Silicon and Intel (both slices, lipo'd by Tauri). DMG only.
+            runner: macos-latest
+            platform: macos
+            arch: universal
+            file_arch: universal
+            target: universal-apple-darwin
+            bundles: app,dmg
+            native: true
+            optional: false
           - name: linux-x64
             # The oldest supported Ubuntu runner: binaries built against its glibc (2.35) and
             # WebKitGTK 4.1 run on that and newer distributions.
@@ -90,15 +89,6 @@ jobs:
             bundles: appimage,deb,rpm
             native: true
             optional: false
-          - name: linux-arm64
-            runner: ubuntu-22.04-arm
-            platform: linux
-            arch: arm64
-            file_arch: arm64
-            target: aarch64-unknown-linux-gnu
-            bundles: appimage,deb,rpm
-            native: true
-            optional: true
 
     steps:
       - uses: actions/checkout@v4
@@ -110,7 +100,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -203,7 +193,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $v = node scripts/version.mjs current
-          $name = "dist/Skele-$v-windows-${{ matrix.file_arch }}"
+          $name = "dist/Skele-v$v-windows-${{ matrix.file_arch }}"
           node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele.exe"
           if ($LASTEXITCODE) { throw "executable failed" }
 
@@ -267,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           v=$(node scripts/version.mjs current)
-          name="dist/Skele-${v}-macos-${{ matrix.file_arch }}"
+          name="dist/Skele-v${v}-macos-${{ matrix.file_arch }}"
           node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele"
           # The DMG must open without a prompt (no license agreement), so attach gets no input.
           mount=$(hdiutil attach -nobrowse -readonly -noautoopen "$name.dmg" < /dev/null | tail -1 | awk -F'\t' '{print $NF}')
@@ -276,8 +266,14 @@ jobs:
           node scripts/smoke-test.mjs --exe "$mount/Skele.app/Contents/MacOS/skele"
           hdiutil detach "$mount"
           codesign --verify --deep --verbose=2 "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app"
-          unzip -q "$name.zip" -d "$RUNNER_TEMP/zip"
-          codesign --verify --deep "$RUNNER_TEMP/zip/Skele.app"
+          if [ "${{ matrix.arch }}" != "universal" ]; then
+            unzip -q "$name.zip" -d "$RUNNER_TEMP/zip"
+            codesign --verify --deep "$RUNNER_TEMP/zip/Skele.app"
+          else
+            archs=$(lipo -archs "src-tauri/target/${{ matrix.target }}/release/bundle/macos/Skele.app/Contents/MacOS/skele")
+            echo "Universal binary slices: $archs"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]] || { echo "::error::not a universal binary"; exit 1; }
+          fi
 
       - name: Smoke test (Linux binary, AppImage, .deb, .rpm, tarball)
         if: matrix.platform == 'linux'
@@ -287,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           v=$(node scripts/version.mjs current)
-          name="Skele-${v}-linux-${{ matrix.file_arch }}"
+          name="Skele-v${v}-linux-${{ matrix.file_arch }}"
           xvfb-run -a node scripts/smoke-test.mjs --exe "src-tauri/target/${{ matrix.target }}/release/skele"
           chmod +x "dist/$name.AppImage"
           xvfb-run -a node scripts/smoke-test.mjs --exe "dist/$name.AppImage"

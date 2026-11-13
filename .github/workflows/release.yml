@@ -3,8 +3,8 @@ name: Release
 # Push a version tag (v1.0.0, v1.1.0, v2.0.0-beta.1 …) to publish a GitHub release:
 #   validate the version → run CI → build every platform → verify and checksum the artifacts
 #   → publish them with release notes from CHANGELOG.md and in-app update metadata.
-# Only artifacts that were built and verified in this run are published. A failed required
-# platform stops the release; a failed optional (ARM64) platform is named in the notes.
+# Only artifacts that were built and verified in this run are published. A failed platform
+# stops the release.
 
 on:
   push:
@@ -77,8 +77,7 @@ jobs:
           node scripts/assemble-release.mjs \
             --in artifacts --out release \
             --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" \
-            --required windows-x64,macos-arm64,macos-x64,linux-x64 \
-            --optional windows-arm64,linux-arm64
+            --required windows-x64,macos-arm64,macos-x64,macos-universal,linux-x64
           ls -la release
           cat release/release-notes.md
 
