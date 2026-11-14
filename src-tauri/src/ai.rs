@@ -240,9 +240,18 @@ pub(crate) fn kill_tree(pid: u32) {
     }
     #[cfg(unix)]
     {
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{pid}")])
-            .status();
+        // The tool was started in its own process group (`process_group(0)`), whose id is its
+        // pid: signal that group directly. Not via the `kill` program, which can read "-<pid>"
+        // as an option and end up signalling pid -1, i.e. every process of this user.
+        let Ok(pgid) = libc::pid_t::try_from(pid) else {
+            return;
+        };
+        if pgid > 1 {
+            // SAFETY: killpg only sends a signal; a group that's gone just returns ESRCH.
+            unsafe {
+                libc::killpg(pgid, libc::SIGTERM);
+            }
+        }
     }
 }
 
@@ -1600,6 +1609,24 @@ mod tests {
             1,
             "Codex changed files in read-only mode"
         );
+    }
+
+    /// Stopping a run signals only that run's process group (CI caught `kill -TERM -<pid>`
+    /// signalling every process of the user on Linux).
+    #[cfg(unix)]
+    #[test]
+    fn kill_tree_stops_only_the_group() {
+        let mut child = command(Path::new("/bin/sh"))
+            .args(["-c", "sleep 30 & sleep 30"])
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        kill_tree(child.id());
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        kill_tree(0); // ignored, never "every process"
+        kill_tree(1);
     }
 
     #[test]
