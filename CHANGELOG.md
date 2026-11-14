@@ -6,8 +6,20 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
 ### Added
 
+- **AI chat** (sidebar → Chat, `Ctrl/⌘ Shift O`). Chat with Claude or Codex, attach pages as
+  context, switch provider or model mid-chat, see reasoning, stop, regenerate, edit a message,
+  and save a reply as a page. Chats are kept per workspace on this device (not in backups).
+  - Desktop app: uses the **Claude Code** and **Codex** command-line tools you're already
+    signed in to, with no API key (`src-tauri/src/ai.rs`). Claude Code runs with no tools;
+    Codex runs in its read-only sandbox in a private folder.
+  - Anywhere: your own **Anthropic** or **OpenAI** API key (Settings → AI).
+  - Type `/` in the message box for Skele's own commands: `/usage` (Claude Code and Codex
+    plan limits, with reset times), `/status` (accounts, versions, this chat's model), `/new`,
+    `/help`. They're answered by Skele and never sent to a model.
 - **AI workspace** on top of AI chat (see [docs/AI.md](docs/AI.md)):
   - **Ollama** as a provider for local models (desktop and browser): detection, start, model
     download/delete, context window, and a **local fallback** that answers when Claude Code,
@@ -26,9 +38,16 @@ All notable changes are listed here. The format follows
   - Usage: tokens and cost per reply, a per-day usage history per provider, and a warning
     near Claude Code / Codex plan limits.
   - Codex's model list (from its own cache) in the model menu; Claude Code's Fable alias.
+- **Spotify Free on Windows**: the player plays, pauses and skips in the Spotify app on this
+  computer through Windows' media controls, with its track, cover art and progress. It works
+  with Free accounts and without connecting Spotify; Premium keeps the full Web API player.
+- **Colour themes** (Settings → Appearance): Skele, Claude, ChatGPT, VS Code, GitHub, One,
+  Nord, Dracula, Catppuccin, Tokyo Night, Rosé Pine, Solarized and Gruvbox, each with a light
+  and a dark version. A theme brings its own accent, or keep any accent colour.
 
 ### Changed
 
+- AI providers show their real logos (Claude, Codex, OpenAI, Ollama).
 - Codex chats no longer pick up the MCP servers and app connectors configured in Codex
   itself unless you turn on *Use Claude Code's and Codex's own extensions*.
 - Errors from the desktop app's own commands are shown as-is instead of "Something went wrong".
@@ -41,29 +60,9 @@ All notable changes are listed here. The format follows
 - Linux and macOS: stopping an AI reply could signal every process of the user (the `kill`
   program read the process group as an option). Skele now signals only that reply's own
   process group.
-
-## [0.2.0] - 2026-11-14
-
-### Added
-
-- **AI chat** (sidebar → Chat, `Ctrl/⌘ Shift O`). Chat with Claude or Codex, attach pages as
-  context, switch provider or model mid-chat, see reasoning, stop, regenerate, edit a message,
-  and save a reply as a page. Chats are kept per workspace on this device (not in backups).
-  - Desktop app: uses the **Claude Code** and **Codex** command-line tools you're already
-    signed in to, with no API key (`src-tauri/src/ai.rs`). Claude Code runs with no tools;
-    Codex runs in its read-only sandbox in a private folder.
-  - Anywhere: your own **Anthropic** or **OpenAI** API key (Settings → AI).
-  - Type `/` in the message box for Skele's own commands: `/usage` (Claude Code and Codex
-    plan limits, with reset times), `/status` (accounts, versions, this chat's model), `/new`,
-    `/help`. They're answered by Skele and never sent to a model.
-- **Colour themes** (Settings → Appearance): Skele, Claude, ChatGPT, VS Code, GitHub, One,
-  Nord, Dracula, Catppuccin, Tokyo Night, Rosé Pine, Solarized and Gruvbox, each with a light
-  and a dark version. A theme brings its own accent, or keep any accent colour.
-
-### Changed
-
-- The logo no longer sits on a black tile: the app icon, window icon, favicon and in-app logo
-  are just the Skele mark on a transparent background.
+- The model menu could open taller than the space above the message box, hiding the first
+  models; it now fits the window and scrolls.
+- Windows: the app icon could keep the old logo with a black background from a cached build.
 
 ## [0.1.0] - 2026-11-13
 
