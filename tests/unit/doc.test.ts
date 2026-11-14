@@ -51,6 +51,23 @@ describe("extractText", () => {
     });
     expect(text).toBe("Title\nHello world");
   });
+
+  it("includes wiki link labels (they have no text child)", () => {
+    const text = extractText({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "See " },
+            { type: "wikiLink", attrs: { pageId: "p1", label: "Team handbook" } },
+            { type: "text", text: " for rituals." },
+          ],
+        },
+      ],
+    });
+    expect(text).toBe("See Team handbook for rituals.");
+  });
 });
 
 describe("sanitizeDoc colours", () => {

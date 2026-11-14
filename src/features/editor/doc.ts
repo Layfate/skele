@@ -23,6 +23,11 @@ export function extractText(doc: unknown, limit = 200_000): string {
       out.push(node.text);
       size += node.text.length;
     }
+    // Wiki links are atoms: their visible text is the label, not a text child.
+    if (node.type === "wikiLink" && typeof node.attrs?.label === "string") {
+      out.push(node.attrs.label);
+      size += node.attrs.label.length;
+    }
     if (node.type === "image" && typeof node.attrs?.alt === "string") out.push(node.attrs.alt);
     if (node.type === "bookmark" && typeof node.attrs?.title === "string") out.push(node.attrs.title);
     if (Array.isArray(node.content)) {
