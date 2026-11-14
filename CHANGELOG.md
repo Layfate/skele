@@ -36,6 +36,12 @@ All notable changes are listed here. The format follows
   transparent, and the iOS home-screen and Android maskable icons, which can't be transparent,
   use Skele's indigo instead of a black tile.
 
+### Fixed
+
+- Linux and macOS: stopping an AI reply could signal every process of the user (the `kill`
+  program read the process group as an option). Skele now signals only that reply's own
+  process group.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added
