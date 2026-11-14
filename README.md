@@ -70,9 +70,8 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
 
 ## Install
 
-Download the latest version from **[GitHub Releases](../../releases/latest)**. Each release
-lists a SHA-256 checksum for every file in `SHA256SUMS.txt`, and its notes say which builds are
-code-signed.
+Download the latest version from **[GitHub Releases](../../releases/latest)**. GitHub shows a
+SHA-256 checksum next to every file, and the release notes say which builds are code-signed.
 
 | System | Download | Notes |
 |---|---|---|

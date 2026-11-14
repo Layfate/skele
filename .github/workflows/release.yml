@@ -67,7 +67,7 @@ jobs:
           echo "macos=$(all notarized macos)" >> "$GITHUB_OUTPUT"
           echo "updater=$(all updater '')" >> "$GITHUB_OUTPUT"
 
-      - name: Verify artifacts, checksums, update metadata, notes
+      - name: Verify artifacts, update metadata, notes
         env:
           WINDOWS_SIGNED: ${{ steps.signing.outputs.windows }}
           MACOS_NOTARIZED: ${{ steps.signing.outputs.macos }}

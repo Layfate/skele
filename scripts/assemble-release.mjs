@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Assembles a GitHub release from the per-platform build artifacts: checks every manifest
 // against the files actually present, refuses to continue if a required platform is missing,
-// and writes SHA256SUMS.txt, latest.json (in-app updater metadata) and the release notes.
+// and writes latest.json (in-app updater metadata) and the release notes. GitHub shows each
+// file's SHA-256 on the release page, so no separate checksum file is published.
 //
 //   node scripts/assemble-release.mjs --in artifacts --out release --tag v1.2.3 --repo owner/name \
 //     --required windows-x64,macos-arm64,macos-x64,macos-universal,linux-x64 [--optional …]
@@ -9,7 +10,6 @@
 // Env (signing status, for the notes): WINDOWS_SIGNED, MACOS_NOTARIZED, UPDATER_SIGNED = "true"/"false";
 // RUN_URL (link to the workflow run, for missing optional targets).
 
-import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -75,17 +75,14 @@ const missingOptional = optional.filter((n) => !manifests.has(n));
 const unexpected = [...manifests.keys()].filter((n) => !required.includes(n) && !optional.includes(n));
 if (unexpected.length) fail(`Unexpected build outputs: ${unexpected.join(", ")}`);
 
-// ── Copy files and checksum them ──
+// ── Copy files ──
 mkdirSync(args.out, { recursive: true });
 const order = [...required, ...optional].filter((n) => manifests.has(n));
 const download = (file) => `https://github.com/${args.repo}/releases/download/${args.tag}/${encodeURIComponent(file)}`;
-const sums = [];
-const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 for (const name of order) {
   const m = manifests.get(name);
   for (const f of m.files) {
     copyFileSync(path.join(m.dir, f.file), path.join(args.out, f.file));
-    sums.push(`${sha256(path.join(args.out, f.file))}  ${f.file}`);
   }
   for (const u of new Set(m.updater.map((u) => u.file))) copyFileSync(path.join(m.dir, `${u}.sig`), path.join(args.out, `${u}.sig`));
 }
@@ -100,9 +97,7 @@ const hasUpdater = Object.keys(platforms).length > 0;
 if (hasUpdater) {
   const latest = { version, notes, pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), platforms };
   writeFileSync(path.join(args.out, "latest.json"), JSON.stringify(latest, null, 2) + "\n");
-  sums.push(`${sha256(path.join(args.out, "latest.json"))}  latest.json`);
 }
-writeFileSync(path.join(args.out, "SHA256SUMS.txt"), sums.join("\n") + "\n");
 
 // ── Release notes ──
 const mb = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -132,21 +127,21 @@ const body = [
   macNotarized
     ? "- **macOS:** signed with a Developer ID and notarized by Apple."
     : "- **macOS: not signed with a Developer ID or notarized** (development build, ad-hoc signed). The first time, right-click Skele → **Open**, or allow it in **System Settings → Privacy & Security → Open Anyway**.",
-  "- **Linux:** packages aren't GPG-signed. Use the checksums below.",
+  "- **Linux:** packages aren't GPG-signed. Check the SHA-256 below.",
   hasUpdater
     ? "- **In-app updates:** update packages are signed with Skele's updater key and verified by the app before installing. The `.app.tar.gz` and `.sig` files are for the updater, not for manual download."
     : "- **In-app updates aren't available for this release** (no updater signing key was configured). Download new versions here.",
   "",
   "## Verify your download",
   "",
-  "`SHA256SUMS.txt` lists a SHA-256 checksum for every file.",
+  "GitHub shows the SHA-256 of every file next to it under **Assets**. Compare it with the file you downloaded:",
   "",
   "```sh",
-  "sha256sum --check --ignore-missing SHA256SUMS.txt        # Linux",
-  "shasum -a 256 --check --ignore-missing SHA256SUMS.txt    # macOS",
+  "sha256sum Skele-v" + version + "-linux-x86_64.AppImage        # Linux",
+  "shasum -a 256 Skele-v" + version + "-macos-arm64.dmg          # macOS",
   "```",
   "",
-  "On Windows (PowerShell): `Get-FileHash .\\" + (rows.length ? `Skele-v${version}-windows-x86_64.exe` : "file") + "` and compare it with the line in `SHA256SUMS.txt`.",
+  "On Windows (PowerShell): `Get-FileHash .\\" + `Skele-v${version}-windows-x86_64.exe` + "`.",
   missingOptional.length
     ? [
         "",
@@ -162,4 +157,4 @@ writeFileSync(path.join(args.out, "release-notes.md"), body + "\n");
 
 console.log(`✓ ${order.length} platform(s): ${order.join(", ")}`);
 if (missingOptional.length) console.log(`! not included: ${missingOptional.join(", ")}`);
-console.log(`✓ ${sums.length} checksums${hasUpdater ? `, latest.json with ${Object.keys(platforms).length} updater entries` : ", no updater metadata"}`);
+console.log(hasUpdater ? `✓ latest.json with ${Object.keys(platforms).length} updater entries` : "✓ no updater metadata");
