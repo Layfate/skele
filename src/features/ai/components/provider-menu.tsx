@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { Check, ChevronDown, Cpu, Gauge, Settings2, Sparkle, SquareTerminal } from "lucide-react";
+import { Check, ChevronDown, Gauge, Settings2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,24 +26,28 @@ import {
   type ModelOption,
   type ProviderId,
 } from "../types";
+import { BrandMark, type BrandLogo } from "./brand-logos";
+
+const PROVIDER_LOGOS: Record<ProviderId, BrandLogo> = {
+  "claude-cli": "claude",
+  anthropic: "claude",
+  "codex-cli": "codex",
+  openai: "openai",
+  ollama: "ollama",
+};
 
 export function ProviderIcon({ provider, className }: { provider: ProviderId; className?: string }) {
   const family = PROVIDERS[provider].family;
-  const Icon = family === "claude" ? Sparkle : family === "local" ? Cpu : SquareTerminal;
   return (
     <span
       aria-hidden
       className={cn(
         "flex size-6 shrink-0 items-center justify-center rounded-md",
-        family === "claude"
-          ? "bg-[#d97757]/15 text-[#c4623f] dark:text-[#e48a68]"
-          : family === "local"
-            ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
-            : "bg-foreground/8 text-foreground/80",
+        family === "claude" ? "bg-[#d97757]/15 text-[#d97757]" : "bg-foreground/8 text-foreground",
         className,
       )}
     >
-      <Icon className="size-3.5" strokeWidth={2} />
+      <BrandMark logo={PROVIDER_LOGOS[provider]} className="size-3.5" />
     </span>
   );
 }
@@ -117,7 +121,11 @@ export function ProviderMenu({
           <ChevronDown className="size-3.5 shrink-0" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-[70vh] w-72 overflow-y-auto scrollbar-thin">
+      <DropdownMenuContent
+        align="start"
+        collisionPadding={8}
+        className="max-h-[min(70vh,var(--radix-dropdown-menu-content-available-height))] w-72 overflow-y-auto scrollbar-thin"
+      >
         {groups
           .filter((g) => providerAvailable(g.id, settings))
           .map((g, i) => (
