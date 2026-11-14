@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { SettingsCard } from "@/features/settings/components/settings-page";
 import { isDesktop } from "@/lib/desktop";
 import { beginConnect, cancelConnect, disconnect, originProblem, redirectUri, setClientId, SPOTIFY_SCOPES } from "../auth";
-import { spotifyKeys, usePlayerDisplay, useSetPlayerDisplay, useSpotifyMe, useSpotifyStatus, type PlayerDisplay } from "../hooks";
+import { spotifyKeys, useLocalSupported, usePlayerDisplay, useSetPlayerDisplay, useSpotifyMe, useSpotifyStatus, type PlayerDisplay } from "../hooks";
 import { SpotifyLogo } from "./spotify-player";
 
 export function SpotifySettings() {
@@ -20,6 +20,7 @@ export function SpotifySettings() {
   const status = useSpotifyStatus();
   const me = useSpotifyMe(!!status.data?.connected);
   const display = usePlayerDisplay();
+  const localSupported = !!useLocalSupported().data;
   const setDisplay = useSetPlayerDisplay();
   const [clientId, setClientIdDraft] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -43,12 +44,17 @@ export function SpotifySettings() {
                   {me.data?.product === "premium"
                     ? "Premium — full playback control."
                     : me.data
-                      ? "Free account — you can see what's playing and browse playlists; playback control needs Premium."
+                      ? localSupported
+                        ? "Free account — play, pause and skip work through the Spotify app on this computer; starting playlists needs Premium."
+                        : "Free account — you can see what's playing and browse playlists; playback control needs Premium."
                       : "Checking your account…"}
                 </p>
               </>
             ) : (
-              <p className="text-muted-foreground">Not connected</p>
+              <p className="text-muted-foreground">
+                Not connected
+                {localSupported ? ". Play, pause and skip still work for the Spotify app on this computer, with any account." : ""}
+              </p>
             )}
           </div>
           {status.data.connected ? (
@@ -96,7 +102,7 @@ export function SpotifySettings() {
         {problem && !status.data.connected && <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm">{problem}</p>}
       </SettingsCard>
 
-      {status.data.connected && (
+      {(status.data.connected || localSupported) && (
         <SettingsCard title="Player">
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Where to show the player">
             {(

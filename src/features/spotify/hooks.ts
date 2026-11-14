@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { appMeta } from "@/data/registry";
 import { spotify, SpotifyError } from "./api";
 import { getClientId, isConnected } from "./auth";
+import { localArtwork, localControl, localControlSupported, localSession, type LocalAction, type LocalSession } from "./local";
 
 export type PlayerDisplay = "sidebar" | "floating" | "off";
 export const spotifyKeys = {
@@ -16,6 +17,8 @@ export const spotifyKeys = {
   playlists: ["spotify", "playlists"] as const,
   recent: ["spotify", "recent"] as const,
   display: ["spotify", "display"] as const,
+  localSupported: ["spotify", "local", "supported"] as const,
+  local: ["spotify", "local", "session"] as const,
 };
 
 export function useSpotifyStatus() {
@@ -82,5 +85,46 @@ export function useSpotifyAction() {
       if (e instanceof SpotifyError && e.kind === "not-connected") qc.invalidateQueries({ queryKey: spotifyKeys.status });
       toast.error(e instanceof Error ? e.message : "Spotify request failed");
     },
+  });
+}
+
+/** Whether this copy of Skele can control the Spotify app directly (Windows desktop app). */
+export function useLocalSupported() {
+  return useQuery({ queryKey: spotifyKeys.localSupported, queryFn: localControlSupported, staleTime: Infinity });
+}
+
+/** What the Spotify app on this computer is playing, polled while the window is visible. */
+export function useLocalSession(enabled: boolean) {
+  const visible = useVisible();
+  return useQuery({
+    queryKey: spotifyKeys.local,
+    queryFn: localSession,
+    enabled,
+    refetchInterval: visible ? 2000 : false,
+    retry: false,
+  });
+}
+
+/** Cover art for the local track; refetched only when the track changes. */
+export function useLocalArtwork(session: LocalSession | null | undefined) {
+  return useQuery({
+    queryKey: ["spotify", "local", "art", session?.title, session?.artist, session?.album],
+    queryFn: localArtwork,
+    enabled: !!session,
+    staleTime: Infinity,
+    gcTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useLocalAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (action: LocalAction) => localControl(action),
+    onSuccess: () => {
+      setTimeout(() => qc.invalidateQueries({ queryKey: spotifyKeys.local }), 250);
+      setTimeout(() => qc.invalidateQueries({ queryKey: spotifyKeys.local }), 1000);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't control Spotify"),
   });
 }

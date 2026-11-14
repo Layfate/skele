@@ -3,12 +3,14 @@
 //! internet except what the user turns on (Spotify, update checks against GitHub Releases).
 //! Spotify sign-in uses a loopback redirect on 127.0.0.1 (see `oauth.rs`). AI chat can run the
 //! user's own Claude Code / Codex command-line tools (see `ai.rs`, with plugins, MCP servers
-//! and skills in `ai_ext.rs`) and a local Ollama server (see `ai_ollama.rs`).
+//! and skills in `ai_ext.rs`) and a local Ollama server (see `ai_ollama.rs`). On Windows the
+//! Spotify app can also be controlled through the OS media session (see `media.rs`).
 
 mod ai;
 mod ai_ext;
 mod ai_ollama;
 mod commands;
+mod media;
 mod oauth;
 mod paths;
 mod storage;
@@ -110,6 +112,9 @@ pub fn run() {
             ai_ollama::ai_ollama_pull,
             ai_ollama::ai_ollama_delete,
             ai_ollama::ai_ollama_start,
+            media::media_session,
+            media::media_control,
+            media::media_artwork,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Skele");
