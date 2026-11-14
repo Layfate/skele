@@ -47,7 +47,7 @@ export function useSaveQuickNote(workspaceId: string) {
   });
 }
 
-/** Keeps theme / accent / font size / density on <html> in sync with the stored preferences. */
+/** Keeps theme / colour theme / accent / font size / density on <html> in sync with the stored preferences. */
 export function useAppearanceSync() {
   const { data } = usePreferences();
   const { theme, setTheme } = useTheme();
@@ -56,14 +56,15 @@ export function useAppearanceSync() {
     if (data.theme !== theme) setTheme(data.theme);
     const root = document.documentElement;
     root.dataset.accent = data.accent;
+    root.dataset.colorTheme = data.colorTheme;
     root.dataset.fontSize = data.fontSize;
     root.dataset.density = data.density;
     try {
       localStorage.setItem(
         "skele-appearance",
-        JSON.stringify({ accent: data.accent, fontSize: data.fontSize, density: data.density }),
+        JSON.stringify({ accent: data.accent, colorTheme: data.colorTheme, fontSize: data.fontSize, density: data.density }),
       );
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.theme, data?.accent, data?.fontSize, data?.density]);
+  }, [data?.theme, data?.accent, data?.colorTheme, data?.fontSize, data?.density]);
 }

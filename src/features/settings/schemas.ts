@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ACCENTS } from "@/lib/colors";
+import { COLOR_THEME_IDS } from "@/lib/themes";
 
 export const dashboardWidgetIds = [
   "recent",
@@ -25,7 +26,8 @@ export const notificationsSchema = z.object({
 
 export const updatePreferencesSchema = z.object({
   theme: z.enum(["light", "dark", "system"]).optional(),
-  accent: z.enum(ACCENTS as [string, ...string[]]).optional(),
+  accent: z.enum(["theme", ...ACCENTS] as [string, ...string[]]).optional(),
+  colorTheme: z.enum(COLOR_THEME_IDS as [string, ...string[]]).optional(),
   fontSize: z.enum(["small", "default", "large"]).optional(),
   dashboard: dashboardConfigSchema.optional(),
   notifications: notificationsSchema.optional(),

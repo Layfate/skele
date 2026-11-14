@@ -2,7 +2,8 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSyncExternalStore, type ReactNode } from "react";
-import { Building2, DatabaseBackup, HardDrive, Keyboard, Monitor, Palette, Plug, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Building2, DatabaseBackup, HardDrive, Keyboard, MessagesSquare, Monitor, Palette, Plug, ShieldCheck, type LucideIcon } from "lucide-react";
+import { AiSettingsSection } from "@/features/ai/components/ai-settings";
 import { isDesktop } from "@/lib/desktop";
 import { DesktopSection } from "@/features/desktop/desktop-section";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ const ALL_SECTIONS: Section[] = [
   { id: "storage", label: "Attachments", icon: HardDrive, group: "Workspace", render: () => <StorageSection /> },
   { id: "appearance", label: "Appearance", icon: Palette, group: "App", render: () => <AppearanceSection /> },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard, group: "App", render: () => <ShortcutsSection /> },
+  { id: "ai", label: "AI", icon: MessagesSquare, group: "App", render: () => <AiSettingsSection /> },
   { id: "integrations", label: "Integrations", icon: Plug, group: "App", render: () => <IntegrationsSection /> },
   { id: "desktop", label: "Desktop app", icon: Monitor, group: "App", render: () => <DesktopSection />, desktopOnly: true },
   { id: "privacy", label: "Privacy", icon: ShieldCheck, group: "App", render: () => <PrivacySection /> },

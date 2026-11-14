@@ -25,6 +25,12 @@ renders on your device:
   In the desktop app, external links open in the system browser.
 - **Spotify** uses OAuth 2.0 Authorization Code with PKCE. There is no client secret. Tokens
   stay in the local app registry, and backups and Markdown exports never include them.
+- **AI (desktop app):** Skele runs only the Claude Code and Codex CLIs, with arguments built
+  from validated values in Rust, and never reads their credentials. Each chat's access mode
+  (chat only, read files, edit files) limits what they may do, and nothing waits for a
+  permission prompt: anything else is refused. Plugin and skill management call fixed CLI
+  subcommands; skill files are only written inside the CLIs' skills folders. MCP servers you
+  add run with your permissions, so only add ones you trust. See [docs/AI.md](docs/AI.md).
 - **Service worker** (web build only) caches the app's own static files. It never caches
   third-party requests.
 

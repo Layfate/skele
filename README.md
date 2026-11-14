@@ -1,8 +1,39 @@
-# Skele
+<p align="center">
+  <a href="https://github.com/Layfate/skele">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/skele-logo-dark.png">
+      <img src="docs/brand/skele-logo-light.png" alt="Skele logo" width="140" height="140">
+    </picture>
+  </a>
+</p>
 
-A calm, fast, keyboard-first workspace for notes, tasks, projects and databases. It's free and
-open source, and it's **local-first**: there's no account and no Skele server, and everything
-you write stays on your device.
+<h1 align="center" style="border-bottom: none">
+  <b><a href="https://github.com/Layfate/skele">Skele</a></b><br>
+  A calm, local-first workspace for notes, tasks, projects and databases
+</h1>
+
+<p align="center">
+  Free and open source, with an optional AI workspace. No account, no server: everything you write stays on your device.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Layfate/skele/releases/latest"><img src="https://img.shields.io/github/v/release/Layfate/skele?label=release&color=5b5bd6" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5b5bd6" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-5b5bd6" alt="Windows, macOS, Linux and web">
+</p>
+
+<p align="center">
+  <a href="https://github.com/Layfate/skele/releases/latest"><b>Download</b></a> •
+  <a href="#features"><b>Features</b></a> •
+  <a href="#install"><b>Install</b></a> •
+  <a href="#where-your-data-lives"><b>Your data</b></a> •
+  <a href="#development"><b>Development</b></a> •
+  <a href="CONTRIBUTING.md"><b>Contributing</b></a>
+</p>
+
+Skele is a calm, fast, keyboard-first workspace for notes, tasks, projects and databases. It's
+**local-first**: there's no account and no Skele server, and everything you write stays on your
+device.
 
 Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installable web app
 (PWA) in any modern browser.
@@ -26,6 +57,13 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
 - **Your data, your files:** Markdown import and export (an Obsidian vault works in both
   directions), complete `.skele` backups, and automatic recovery points
 - **Offline:** everything works without a network connection
+- **AI workspace (optional):** chat with Claude, Codex or a local model (Ollama) about your
+  notes. The desktop app uses your existing Claude Code / Codex sign-in and can let them read
+  or edit a folder you choose, with MCP servers, plugins, skills, @agents that answer side by
+  side, plan-limit tracking and a local fallback. Anywhere else, bring your own Anthropic or
+  OpenAI API key. Nothing is sent until you send a message. See [docs/AI.md](docs/AI.md)
+- **Colour themes:** Claude, ChatGPT, VS Code, GitHub, Nord, Dracula, Catppuccin and more,
+  each in light and dark
 - **Optional Spotify** playback controls (your own Spotify app, PKCE, no secrets)
 - **Desktop app:** native window, menus and file dialogs, workspaces stored as SQLite files,
   a portable mode, and optional signed in-app updates
@@ -198,7 +236,7 @@ src-tauri/               desktop shell (Rust): SQLite storage, data paths, updat
 scripts/                 build, artifact collection, release assembly, smoke tests
 tests/unit/ · tests/e2e/ · tests/desktop/
 .github/workflows/       ci.yml · build.yml · release.yml
-docs/                    desktop, releasing, data format, migration, deployment, status
+docs/                    desktop, releasing, data format, migration, deployment, AI, status
 ```
 
 ### Stack

@@ -396,8 +396,12 @@ export function PrivacySection() {
       <SettingsCard title="Your data stays on this device">
         <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
           <li>Skele has no accounts and no Skele server. Workspaces are stored in this browser&apos;s (or the desktop app&apos;s) local database.</li>
-          <li>Skele makes no network requests for your notes, tasks or files, and has no telemetry.</li>
-          <li>The only internet features are optional integrations (like Spotify), which connect only after you turn them on, and the desktop app&apos;s update check against GitHub Releases, which you can turn off in “Desktop app”.</li>
+          <li>Skele makes no network requests for your notes, tasks or files on its own, and has no telemetry.</li>
+          <li>
+            The only internet features are optional: integrations (like Spotify), which connect only after you turn them on; AI chat, which
+            sends your messages and any pages you attach to Anthropic or OpenAI only when you send a message; and the desktop app&apos;s update
+            check against GitHub Releases, which you can turn off in “Desktop app”.
+          </li>
           <li>Clearing this browser&apos;s site data deletes your workspaces — export backups regularly from “Data &amp; backup”.</li>
         </ul>
       </SettingsCard>

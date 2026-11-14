@@ -85,6 +85,9 @@ export type Preferences = {
   /** Optional name for greetings and comment authorship (never leaves the device). */
   displayName: string;
   theme: "light" | "dark" | "system";
+  /** Colour theme id (src/lib/themes.ts). */
+  colorTheme: string;
+  /** An accent colour name, or "theme" for the colour theme's own accent. */
   accent: string;
   fontSize: "small" | "default" | "large";
   density: "compact" | "comfortable";
@@ -97,6 +100,7 @@ export type Preferences = {
 export const DEFAULT_PREFERENCES: Preferences = {
   displayName: "",
   theme: "system",
+  colorTheme: "skele",
   accent: "indigo",
   fontSize: "default",
   density: "comfortable",

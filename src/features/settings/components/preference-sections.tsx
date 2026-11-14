@@ -4,10 +4,11 @@ import { useTheme } from "next-themes";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { comboFromEvent, formatCombo, resolvedShortcuts } from "@/features/shell/shortcuts";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Check, Monitor, Moon, Sun } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Kbd, modKey } from "@/components/common";
 import { ACCENTS, COLORS } from "@/lib/colors";
+import { COLOR_THEMES, type ColorTheme, type Palette } from "@/lib/themes";
 import { cn } from "@/lib/utils";
 import { usePreferences, useUpdatePreferences } from "../hooks";
 import { SettingsCard } from "./settings-page";
@@ -15,9 +16,11 @@ import { SettingsCard } from "./settings-page";
 export function AppearanceSection() {
   const prefs = usePreferences();
   const update = useUpdatePreferences();
-  const { setTheme } = useTheme();
+  const { setTheme, resolvedTheme } = useTheme();
   if (!prefs.data) return <Skeleton className="h-60" />;
   const p = prefs.data;
+  const mode = resolvedTheme === "dark" ? "dark" : "light";
+  const activeTheme = COLOR_THEMES.find((t) => t.id === p.colorTheme) ?? COLOR_THEMES[0];
   return (
     <>
       <SettingsCard title="Theme">
@@ -48,8 +51,44 @@ export function AppearanceSection() {
           ))}
         </div>
       </SettingsCard>
+      <SettingsCard
+        title="Colour theme"
+        description="Each theme has a light and a dark version. Light, Dark or System above picks which one you see."
+      >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Colour theme">
+          {COLOR_THEMES.map((t) => (
+            <ThemeCard
+              key={t.id}
+              theme={t}
+              palette={t[mode]}
+              active={p.colorTheme === t.id}
+              onSelect={() =>
+                // A theme brings its own accent; the default theme keeps the user's accent.
+                update.mutate({ colorTheme: t.id, ...(t.id === "skele" ? (p.accent === "theme" ? { accent: "indigo" } : {}) : { accent: "theme" }) })
+              }
+            />
+          ))}
+        </div>
+      </SettingsCard>
       <SettingsCard title="Accent colour" description="Used for buttons, highlights and focus rings.">
         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Accent colour">
+          {p.colorTheme !== "skele" && (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={p.accent === "theme"}
+              aria-label={`${activeTheme.label} accent`}
+              title={`${activeTheme.label}'s own accent`}
+              onClick={() => update.mutate({ accent: "theme" })}
+              className={cn(
+                "flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs ring-offset-2 ring-offset-card transition",
+                p.accent === "theme" && "ring-2 ring-foreground/70",
+              )}
+            >
+              <span className="size-4 rounded-full" style={{ background: activeTheme[mode].brand }} />
+              Theme
+            </button>
+          )}
           {ACCENTS.map((a) => (
             <button
               key={a}
@@ -97,6 +136,45 @@ export function AppearanceSection() {
         </div>
       </SettingsCard>
     </>
+  );
+}
+
+function ThemeCard({ theme, palette: c, active, onSelect }: { theme: ColorTheme; palette: Palette; active: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      aria-label={`${theme.label} theme`}
+      onClick={onSelect}
+      className={cn("group overflow-hidden rounded-lg border text-left transition hover:border-foreground/30", active && "border-brand ring-1 ring-brand")}
+    >
+      {/* Miniature of the app in this theme: sidebar, page, accent button. */}
+      <div aria-hidden className="flex h-20" style={{ background: c.bg }}>
+        <div className="w-1/3 space-y-1.5 p-2" style={{ background: c.sidebar, borderRight: `1px solid ${c.border}` }}>
+          <div className="h-1.5 w-3/4 rounded-full" style={{ background: c.sidebarFg, opacity: 0.55 }} />
+          <div className="h-2.5 rounded" style={{ background: c.sidebarAccent }} />
+          <div className="h-1.5 w-2/3 rounded-full" style={{ background: c.sidebarFg, opacity: 0.35 }} />
+          <div className="h-1.5 w-1/2 rounded-full" style={{ background: c.sidebarFg, opacity: 0.35 }} />
+        </div>
+        <div className="flex-1 space-y-1.5 p-2.5">
+          <div className="h-2 w-2/3 rounded-full" style={{ background: c.fg, opacity: 0.85 }} />
+          <div className="h-1.5 w-full rounded-full" style={{ background: c.mutedFg, opacity: 0.45 }} />
+          <div className="h-1.5 w-5/6 rounded-full" style={{ background: c.mutedFg, opacity: 0.45 }} />
+          <div className="flex items-center gap-1 pt-1">
+            <div className="h-3 w-8 rounded" style={{ background: c.brand }} />
+            <div className="h-3 w-6 rounded" style={{ background: c.card, border: `1px solid ${c.border}` }} />
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 border-t bg-card px-2.5 py-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{theme.label}</p>
+          <p className="truncate text-xs text-muted-foreground">{theme.description}</p>
+        </div>
+        {active && <Check className="size-4 shrink-0 text-brand" />}
+      </div>
+    </button>
   );
 }
 

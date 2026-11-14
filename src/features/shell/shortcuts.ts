@@ -18,6 +18,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "palette", label: "Search & command palette", default: "mod+k" },
   { id: "sidebar", label: "Toggle sidebar", default: "mod+\\" },
   { id: "newPage", label: "New page", default: "mod+alt+n" },
+  { id: "newChat", label: "New AI chat", default: "mod+shift+o" },
   { id: "dailyNote", label: "Today's daily note", default: "mod+shift+d" },
   { id: "graph", label: "Graph view", default: "mod+shift+g" },
   { id: "tasks", label: "My tasks", default: "mod+shift+t" },
@@ -64,6 +65,7 @@ export function useShortcuts() {
       graph: () => router.push(routes.graph),
       tasks: () => router.push(routes.tasks),
       home: () => router.push(routes.home),
+      newChat: () => router.push(routes.chat()),
       newPage: async () => {
         const id = await getCurrentWorkspaceId();
         if (!id) return;

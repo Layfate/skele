@@ -1,8 +1,13 @@
 //! Skele desktop app: a native window around the static Skele build (`../out`), with
 //! workspaces stored in SQLite files on disk (see `storage.rs`). Nothing is loaded from the
 //! internet except what the user turns on (Spotify, update checks against GitHub Releases).
-//! Spotify sign-in uses a loopback redirect on 127.0.0.1 (see `oauth.rs`).
+//! Spotify sign-in uses a loopback redirect on 127.0.0.1 (see `oauth.rs`). AI chat can run the
+//! user's own Claude Code / Codex command-line tools (see `ai.rs`, with plugins, MCP servers
+//! and skills in `ai_ext.rs`) and a local Ollama server (see `ai_ollama.rs`).
 
+mod ai;
+mod ai_ext;
+mod ai_ollama;
 mod commands;
 mod oauth;
 mod paths;
@@ -61,6 +66,8 @@ pub fn run() {
             }
 
             app.manage(storage::Engine::new(location.root.clone()));
+            app.manage(ai::AiRuns::default());
+            app.manage(ai_ollama::OllamaRuns::default());
             create_main_window(app, &location)?;
             app.manage(location);
             Ok(())
@@ -80,6 +87,29 @@ pub fn run() {
             commands::open_data_dir,
             oauth::oauth_wait,
             oauth::oauth_cancel,
+            ai::ai_cli_run,
+            ai::ai_cli_cancel,
+            ai::ai_cli_status,
+            ai::ai_cli_auth,
+            ai::ai_codex_usage,
+            ai::ai_codex_models,
+            ai::ai_pick_folder,
+            ai::ai_check_folder,
+            ai_ext::ai_cli_manage,
+            ai_ext::ai_cli_mcp_list,
+            ai_ext::ai_mcp_test,
+            ai_ext::ai_skills_list,
+            ai_ext::ai_skill_read,
+            ai_ext::ai_skill_write,
+            ai_ext::ai_skill_delete,
+            ai_ext::ai_skill_import,
+            ai_ollama::ai_ollama_status,
+            ai_ollama::ai_ollama_models,
+            ai_ollama::ai_ollama_chat,
+            ai_ollama::ai_ollama_cancel,
+            ai_ollama::ai_ollama_pull,
+            ai_ollama::ai_ollama_delete,
+            ai_ollama::ai_ollama_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Skele");

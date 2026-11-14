@@ -1,6 +1,6 @@
 {
   "name": "skele",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A calm, local-first workspace for notes, tasks, projects and databases.",
   "license": "MIT",
   "private": true,
@@ -24,6 +24,7 @@
     "version:set": "node scripts/version.mjs set"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -59,11 +60,14 @@
     "lucide-react": "^1.72.0",
     "next": "16.4.6",
     "next-themes": "^0.4.6",
+    "openai": "^7.57.0",
     "radix-ui": "^1.8.1",
     "react": "19.3.0",
     "react-day-picker": "^10.0.2",
     "react-dom": "19.3.0",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.22.0",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.8",
     "tw-animate-css": "^1.4.0",
     "zod": "^4.6.7",

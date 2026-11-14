@@ -15,5 +15,8 @@ export const routes = {
   databases: "/databases",
   graph: "/graph",
   calendar: "/calendar",
+  chat: (id?: string) => (id ? `/chat?id=${encodeURIComponent(id)}` : "/chat"),
   settings: (tab?: string) => (tab ? `/settings?tab=${tab}` : "/settings"),
+  /** Settings → AI, optionally on one of its tabs (providers, local, mcp, plugins, skills, agents, usage). */
+  aiSettings: (section?: string) => (section ? `/settings?tab=ai&ai=${section}` : "/settings?tab=ai"),
 };

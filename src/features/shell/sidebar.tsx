@@ -11,6 +11,7 @@ import {
   FileText,
   FolderKanban,
   House,
+  MessagesSquare,
   Network,
   Plus,
   Search,
@@ -52,6 +53,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   const nav: { href: string; label: string; icon: LucideIcon; exact?: boolean }[] = [
     { href: routes.home, label: "Home", icon: House, exact: true },
+    { href: routes.chat(), label: "Chat", icon: MessagesSquare },
     { href: routes.notes, label: "Notes", icon: FileText },
     { href: routes.tasks, label: "My tasks", icon: CircleCheckBig },
     { href: routes.projects, label: "Projects", icon: FolderKanban },
