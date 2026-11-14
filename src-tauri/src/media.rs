@@ -54,15 +54,20 @@ async fn run_blocking<T: Send + 'static>(
 
 /// Spotify's own session: the classic installer registers as `Spotify.exe`, the Microsoft
 /// Store build as `SpotifyAB.SpotifyMusic_…!Spotify`.
+// These helpers are only used by the Windows implementation (and the tests), so other
+// platforms don't compile them (CI denies dead-code warnings).
+#[cfg(any(windows, test))]
 fn is_spotify(app_id: &str) -> bool {
     app_id.to_ascii_lowercase().contains("spotify")
 }
 
 /// Windows timestamps count 100 ns ticks since 1601; this is the Unix epoch in those ticks.
+#[cfg(any(windows, test))]
 const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
 
 /// Spotify only reports its position now and then, so the live position is the reported one
 /// plus the time since it was reported (while playing), capped at the track length.
+#[cfg(any(windows, test))]
 fn live_position_ms(
     position_ticks: i64,
     updated_ticks: i64,
