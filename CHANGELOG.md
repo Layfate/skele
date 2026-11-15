@@ -6,6 +6,12 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The expanded Spotify player showed two overlapping buttons in its top-right corner (the
+  panel's close button over the player's own Minimise button), which also blocked clicks on
+  Minimise.
+
 ## [0.2.1] - 2026-11-15
 
 ### Added

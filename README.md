@@ -90,6 +90,13 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
   <img src="docs/screenshots/database.png" alt="The Content calendar database in table view with status, date and channel columns" width="100%">
 </picture>
 
+**Spotify** (optional): what's playing in the sidebar, plus playlists, recent tracks and devices
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/spotify-dark.png">
+  <img src="docs/screenshots/spotify.png" alt="The Spotify player: a now-playing card in the sidebar and the expanded player with playback controls, volume and playlists" width="100%">
+</picture>
+
 ## Install
 
 Download the latest version from **[GitHub Releases](../../releases/latest)**. GitHub shows a

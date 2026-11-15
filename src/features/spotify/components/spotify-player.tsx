@@ -420,7 +420,12 @@ export function SpotifyFloatingPlayer() {
         </aside>
       )}
       <Sheet open={open} onOpenChange={setOpen} modal={false}>
-        <SheetContent side="right" className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-sm" onOpenAutoFocus={(e) => e.preventDefault()}>
+        <SheetContent
+          side="right"
+          className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-sm"
+          showCloseButton={false}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <SheetTitle className="sr-only">Spotify</SheetTitle>
           <SheetDescription className="sr-only">Control your Spotify playback</SheetDescription>
           <ExpandedPlayer state={state} onClose={() => setOpen(false)} />
