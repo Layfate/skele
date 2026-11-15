@@ -151,7 +151,7 @@ test("chat with a local model, slash commands and @agents in the browser", async
   await expect(page.getByRole("button", { name: /^Access:/ })).toHaveCount(0);
 
   await composer(page).fill("/");
-  const menu = page.getByRole("listbox", { name: "Commands and skills" });
+  const menu = page.getByRole("listbox", { name: "Commands, skills and plugins" });
   await expect(menu.getByRole("option", { name: /\/compact/ })).toBeVisible();
   await composer(page).fill("");
 
