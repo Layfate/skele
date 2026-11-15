@@ -4,19 +4,19 @@
 
 import { isDesktop } from "@/lib/desktop";
 import { claudeSubagents } from "./agents";
-import { buildHistory, compactPrompt, contextBudget, historyStart, messageText, summaryBlock, transcript } from "./context";
+import { buildHistory, compactPrompt, contextBudget, historyStart, messageText, summaryBlock, transcript, turnImages } from "./context";
 import { toSpec } from "./extensions";
 import { streamAnthropic } from "./providers/anthropic";
 import { runCli } from "./providers/cli";
 import { streamOllama } from "./providers/ollama";
 import { streamOpenAI } from "./providers/openai";
 import { noHandlers, type TurnHandlers, type TurnMessage, type TurnResult } from "./providers/types";
-import { isCli, PROVIDERS, type Agent, type AiSettings, type Chat, type ChatMessage, type McpServer, type ProviderId } from "./types";
+import { effortFor, isCli, prettyModel, PROVIDERS, type Agent, type AiSettings, type Chat, type ChatMessage, type Effort, type McpServer, type ProviderId } from "./types";
 
 export { messageText };
 
 /** Skele's own commands; any other "/name" is a skill (passed to the CLI). */
-export const SKELE_COMMANDS = new Set(["usage", "status", "new", "help", "compact", "model", "mode", "mcp", "skills", "agents"]);
+export const SKELE_COMMANDS = new Set(["usage", "status", "new", "help", "compact", "model", "effort", "mode", "mcp", "skills", "plugins", "agents"]);
 
 /** The skill a message invokes ("/pdf-tools fill this form"), if any. */
 export function skillInvocation(text: string): string | null {
@@ -27,10 +27,15 @@ export function skillInvocation(text: string): string | null {
 export function systemPrompt(
   settings: AiSettings,
   workspaceName?: string,
-  ctx: { mode?: Chat["mode"]; folder?: string; agent?: Agent; multi?: boolean; mcp?: string[] } = {},
+  ctx: { mode?: Chat["mode"]; folder?: string; agent?: Agent; multi?: boolean; mcp?: string[]; provider?: ProviderId; model?: string; effort?: Effort } = {},
 ) {
+  const model = ctx.model ? prettyModel(ctx.model) : "";
   const parts = [
     "You are the AI assistant inside Skele, a calm, local-first app for notes, tasks, projects and databases.",
+    ctx.provider
+      ? `This chat runs on ${PROVIDERS[ctx.provider].label}${model ? ` with the model ${model}` : ""}${ctx.effort && ctx.provider !== "ollama" ? `, at ${effortFor(ctx.provider, ctx.effort)} effort` : ""}; the user can change both below the message box.`
+      : "",
+    "The user can paste images into a message; when they do, they're attached to it.",
     ctx.agent ? `In this conversation you are "@${ctx.agent.name}". ${ctx.agent.instructions.trim()}` : "",
     workspaceName ? `The user's current workspace is called "${workspaceName}".` : "",
     "When the user attaches pages, their content is given inside <page> tags; use it to answer and refer to pages by title.",
@@ -113,6 +118,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
     agent,
     multi: input.multi,
     mcp: mcp.map((s) => s.name),
+    provider,
+    model,
+    effort: chat.effort,
   });
 
   if (!cli) {
@@ -139,6 +147,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
   // A /skill command has to come first to be recognised, so attached pages follow it.
   let prompt = skill && last.context ? `${last.content}\n\n${last.context}` : messageText(last);
   if (skill && tool === "codex") prompt = prompt.replace(/^\s*\//, "$"); // Codex mentions skills as $name
+  if (!prompt.trim() && last.images?.length) prompt = "(See the attached image.)";
   const context = [
     !session && start > 0 && chat.summary ? summaryBlock(chat.summary.text) : "",
     missed.some((m) => m.content.trim()) ? `Earlier in this conversation (for context):\n\n${transcript(missed, label)}` : "",
@@ -175,6 +184,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
       useCliExtensions: settings.useCliExtensions,
       allowSkills: !!skill,
       agents: tool === "claude" ? claudeSubagents(input.agents ?? [], agent?.id) : undefined,
+      images: turnImages(last),
       signal,
       on,
     }),

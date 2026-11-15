@@ -1,7 +1,7 @@
 // Codex / GPT models through the OpenAI API with the user's own key (Responses API).
 
 import OpenAI from "openai";
-import type { Effort } from "../types";
+import { effortFor, type Effort } from "../types";
 import type { TurnHandlers, TurnMessage, TurnResult } from "./types";
 
 // Reasoning models take `reasoning`; older chat models reject it.
@@ -26,9 +26,19 @@ export async function streamOpenAI(input: {
       {
         model: input.model,
         instructions: input.system,
-        input: input.messages.map((m) => ({ role: m.role, content: m.content })),
+        input: input.messages.map((m) =>
+          m.role === "user" && m.images?.length
+            ? {
+                role: "user" as const,
+                content: [
+                  ...m.images.map((i) => ({ type: "input_image" as const, image_url: `data:${i.mediaType};base64,${i.data}`, detail: "auto" as const })),
+                  { type: "input_text" as const, text: m.content || "(image)" },
+                ],
+              }
+            : { role: m.role, content: m.content },
+        ),
         ...(isReasoningModel(input.model)
-          ? { reasoning: { effort: input.effort, ...(input.showThinking ? { summary: "auto" as const } : {}) } }
+          ? { reasoning: { effort: effortFor("openai", input.effort) as "low" | "medium" | "high", ...(input.showThinking ? { summary: "auto" as const } : {}) } }
           : {}),
       },
       { signal: input.signal },

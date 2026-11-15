@@ -2,11 +2,20 @@
 // /compact summary replaces the messages it covers, and when a conversation still doesn't
 // fit, the oldest messages are left out (with a note saying so).
 
-import type { TurnMessage } from "./providers/types";
+import type { TurnImage, TurnMessage } from "./providers/types";
 import type { AiSettings, Chat, ChatMessage, ProviderId } from "./types";
 
 /** Rough token count (about 4 characters per token for English; close enough for budgets). */
 export const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+
+/** Rough tokens for one image (images are downscaled to about 1568 px before sending). */
+export const IMAGE_TOKENS = 1600;
+
+/** A message's images as the providers take them. */
+export const turnImages = (m: ChatMessage): TurnImage[] | undefined =>
+  m.role === "user" && m.images?.length ? m.images.map((i) => ({ mediaType: i.mediaType, data: i.data })) : undefined;
+
+const imagesNote = (m: ChatMessage) => (m.images?.length ? ` [${m.images.length === 1 ? "an image" : `${m.images.length} images`} attached]` : "");
 
 /** How many tokens of conversation to send, leaving room for the system prompt and the reply. */
 export function contextBudget(provider: ProviderId, settings: Pick<AiSettings, "ollamaContext">): number {
@@ -80,9 +89,10 @@ export function buildHistory(chat: Pick<Chat, "summary" | "messages">, budget: n
   const start = historyStart(chat);
   const msgs = modelMessages(chat.messages.slice(start));
   const texts = dedupePages(msgs.map(messageText));
-  let turns: TurnMessage[] = msgs.map((m, i) => ({ role: m.role, content: speaker(m, self) + texts[i] }));
+  let turns: TurnMessage[] = msgs.map((m, i) => ({ role: m.role, content: speaker(m, self) + texts[i], images: turnImages(m) }));
   const summary = start > 0 && chat.summary ? summaryBlock(chat.summary.text) : "";
-  const cost = (list: TurnMessage[]) => list.reduce((n, t) => n + estimateTokens(t.content) + 4, estimateTokens(summary));
+  const cost = (list: TurnMessage[]) =>
+    list.reduce((n, t) => n + estimateTokens(t.content) + 4 + (t.images?.length ?? 0) * IMAGE_TOKENS, estimateTokens(summary));
 
   let omitted = 0;
   while (turns.length > 1 && cost(turns) > budget) {
@@ -110,14 +120,15 @@ export function chatTokens(chat: Pick<Chat, "summary" | "messages">) {
   const start = historyStart(chat);
   const texts = dedupePages(modelMessages(chat.messages.slice(start)).map(messageText));
   const summary = start > 0 && chat.summary ? estimateTokens(summaryBlock(chat.summary.text)) : 0;
-  return texts.reduce((n, t) => n + estimateTokens(t) + 4, summary);
+  const images = modelMessages(chat.messages.slice(start)).reduce((n, m) => n + (m.images?.length ?? 0), 0);
+  return texts.reduce((n, t) => n + estimateTokens(t) + 4, summary) + images * IMAGE_TOKENS;
 }
 
 /** A plain transcript (for catching a CLI up, and for summarising). */
 export function transcript(messages: ChatMessage[], label: (m: ChatMessage) => string) {
   return modelMessages(messages)
-    .filter((m) => m.content.trim())
-    .map((m) => `${label(m)}: ${messageText(m)}`)
+    .filter((m) => m.content.trim() || m.images?.length)
+    .map((m) => `${label(m)}: ${messageText(m)}${imagesNote(m)}`)
     .join("\n\n");
 }
 

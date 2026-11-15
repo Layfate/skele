@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ExternalLink,
   ListMusic,
@@ -28,6 +28,7 @@ import {
   spotifyKeys,
   useLocalAction,
   useLocalArtwork,
+  useLocalSeek,
   useLocalSession,
   useLocalSupported,
   usePlayback,
@@ -76,12 +77,152 @@ function useProgress(t: Track | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!t?.isPlaying) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timer);
   }, [t?.isPlaying]);
   if (!t) return 0;
   const progress = t.isPlaying ? t.progressMs + Math.max(0, now - t.fetchedAt) : t.progressMs;
   return t.durationMs > 0 ? Math.min(t.durationMs, progress) : progress;
+}
+
+/** Seeking for whichever source drives the player; null when it can't seek. */
+function useSeek(state: PlayerState): ((ms: number) => void) | null {
+  const local = useLocalSeek();
+  if (state.mode === "local") {
+    return state.local.data?.canSeek ? (ms) => local.mutate(ms) : null;
+  }
+  const p = state.playback.data;
+  if (!state.premium || !p?.device || p.actions?.disallows?.seeking) return null;
+  return (ms) => state.action.mutate(() => spotify.seek(ms));
+}
+
+/**
+ * The song's timeline. When seeking is possible, click or drag anywhere on it (a bubble shows
+ * the time under the pointer), or use the arrow keys (5 s; Home / End). While a seek is on
+ * its way, the bar stays where it was dropped instead of jumping back to the old position.
+ */
+function SeekBar({
+  progress,
+  duration,
+  fetchedAt,
+  onSeek,
+  compact,
+}: {
+  progress: number;
+  duration: number;
+  /** When the player's position was last read; a pending seek ends once a newer reading agrees. */
+  fetchedAt: number;
+  onSeek: ((ms: number) => void) | null;
+  compact?: boolean;
+}) {
+  const bar = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<number | null>(null);
+  const [drag, setDrag] = useState<number | null>(null);
+  // Where a seek went, and the progress / reading time when it was made.
+  const [pending, setPending] = useState<{ ms: number; progress: number; fetchedAt: number } | null>(null);
+  const canSeek = !!onSeek && duration > 0;
+
+  // Until the player reports the new position (or 3 s of readings pass), show the seek target
+  // moving along with playback instead of the old position.
+  const expected = pending ? pending.ms + Math.max(0, progress - pending.progress) : progress;
+  const waiting =
+    !!pending && !(fetchedAt !== pending.fetchedAt && Math.abs(progress - expected) < 2500) && fetchedAt - pending.fetchedAt < 3000;
+  const shown = drag ?? (waiting ? expected : progress);
+  const pct = duration > 0 ? Math.min(100, (shown / duration) * 100) : 0;
+
+  const msAt = (clientX: number) => {
+    const r = bar.current!.getBoundingClientRect();
+    return Math.round(Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * duration);
+  };
+  const seek = (ms: number) => {
+    if (!onSeek) return;
+    const clamped = Math.max(0, Math.min(duration - 1000, ms));
+    setPending({ ms: clamped, progress, fetchedAt });
+    onSeek(clamped);
+  };
+  const tip = drag ?? hover;
+
+  return (
+    <div className={cn("flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums", compact ? "mt-1.5" : "mt-2")}>
+      {!compact && <span className="w-8 text-right">{fmt(shown)}</span>}
+      <div
+        ref={bar}
+        role={canSeek ? "slider" : "progressbar"}
+        aria-label={canSeek ? "Seek" : "Playback progress"}
+        aria-valuemin={0}
+        aria-valuemax={Math.round(duration / 1000)}
+        aria-valuenow={Math.round(shown / 1000)}
+        aria-valuetext={`${fmt(shown)} of ${fmt(duration)}`}
+        tabIndex={canSeek ? 0 : undefined}
+        title={canSeek ? undefined : "Seeking isn't available for this player"}
+        onPointerDown={(e) => {
+          if (!canSeek || e.button !== 0) return;
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setDrag(msAt(e.clientX));
+        }}
+        onPointerMove={(e) => {
+          if (!canSeek) return;
+          const ms = msAt(e.clientX);
+          if (drag !== null) setDrag(ms);
+          else setHover(ms);
+        }}
+        onPointerUp={(e) => {
+          if (drag === null) return;
+          seek(msAt(e.clientX));
+          setDrag(null);
+        }}
+        onPointerCancel={() => setDrag(null)}
+        onPointerLeave={() => setHover(null)}
+        onKeyDown={(e) => {
+          if (!canSeek) return;
+          const step = e.shiftKey ? 15_000 : 5_000;
+          const to =
+            e.key === "ArrowRight" || e.key === "ArrowUp"
+              ? shown + step
+              : e.key === "ArrowLeft" || e.key === "ArrowDown"
+                ? shown - step
+                : e.key === "Home"
+                  ? 0
+                  : e.key === "End"
+                    ? duration - 1000
+                    : null;
+          if (to === null) return;
+          e.preventDefault();
+          seek(to);
+        }}
+        className={cn(
+          "group/seek relative flex flex-1 items-center outline-none",
+          compact ? "h-3" : "h-4",
+          canSeek && "cursor-pointer",
+        )}
+      >
+        <div className={cn("relative w-full overflow-hidden rounded-full bg-muted transition-[height]", canSeek ? "h-1 group-hover/seek:h-1.5 group-focus-visible/seek:h-1.5" : "h-1")}>
+          <div className={cn("h-full bg-[#1DB954]", drag === null && "transition-[width] duration-200 ease-linear")} style={{ width: `${pct}%` }} />
+        </div>
+        {canSeek && (
+          <span
+            aria-hidden
+            className={cn(
+              "absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground shadow ring-2 ring-background transition-opacity",
+              drag !== null ? "opacity-100" : "opacity-0 group-hover/seek:opacity-100 group-focus-visible/seek:opacity-100",
+            )}
+            style={{ left: `${pct}%` }}
+          />
+        )}
+        {canSeek && tip !== null && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute bottom-full mb-1.5 -translate-x-1/2 rounded bg-foreground px-1.5 py-0.5 text-[10px] font-medium text-background shadow"
+            style={{ left: `${(tip / duration) * 100}%` }}
+          >
+            {fmt(tip)}
+          </span>
+        )}
+      </div>
+      {!compact && <span className="w-8">{fmt(duration)}</span>}
+    </div>
+  );
 }
 
 /**
@@ -195,6 +336,7 @@ function Transport({ state, size = "sm" }: { state: PlayerState; size?: "sm" | "
 function NowPlaying({ state, compact }: { state: PlayerState; compact?: boolean }) {
   const t = useTrack(state, compact ? 64 : 300);
   const progress = useProgress(t);
+  const onSeek = useSeek(state);
   const err = state.playback.error;
   if (!t && state.mode === "api" && err instanceof SpotifyError && err.kind !== "rate-limited") {
     return <p className="text-xs text-muted-foreground">{err.message}</p>;
@@ -207,7 +349,6 @@ function NowPlaying({ state, compact }: { state: PlayerState; compact?: boolean 
       </div>
     );
   }
-  const pct = t.durationMs > 0 ? (progress / t.durationMs) * 100 : 0;
   return (
     <div>
       <div className="flex items-center gap-2.5">
@@ -227,20 +368,7 @@ function NowPlaying({ state, compact }: { state: PlayerState; compact?: boolean 
         </div>
         {compact && <Transport state={state} />}
       </div>
-      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
-        {!compact && <span>{fmt(progress)}</span>}
-        <div
-          className="h-1 flex-1 overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-label="Playback progress"
-          aria-valuenow={Math.round(pct)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className="h-full bg-[#1DB954]" style={{ width: `${pct}%` }} />
-        </div>
-        {!compact && <span>{fmt(t.durationMs)}</span>}
-      </div>
+      <SeekBar key={`${t.title}|${t.artists}`} progress={progress} duration={t.durationMs} fetchedAt={t.fetchedAt} onSeek={onSeek} compact={compact} />
     </div>
   );
 }

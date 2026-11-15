@@ -7,7 +7,7 @@
 
 import { appMeta } from "@/data/registry";
 import { newId, now } from "@/data/common";
-import { tauri, type CliTool, type McpSpec } from "./providers/cli";
+import { claudeCatalog, tauri, type ClaudeCatalog, type CliTool, type McpSpec } from "./providers/cli";
 import { serial } from "./store";
 import type { McpServer } from "./types";
 
@@ -400,4 +400,94 @@ const yaml = (s: string) => (/[:#\-{}[\],&*!|>'"%@`]|^\s|\s$/.test(s) ? JSON.str
 /** A new SKILL.md from a name, a description and instructions. */
 export function skillMarkdown(name: string, description: string, body: string) {
   return `---\nname: ${name}\ndescription: ${yaml(description.replace(/\s+/g, " ").trim())}\n---\n\n${body.trim()}\n`;
+}
+
+// ── What "/" offers in a chat: skills, plugin skills and plugin commands ─────────────────
+
+/** One entry in the "/" menu that goes to the CLI. */
+export type SkillEntry = {
+  /** What follows the "/" ("pdf", "anthropic-skills:pdf"). */
+  name: string;
+  description?: string | null;
+  /** The plugin it comes from ("anthropic-skills"), if any. */
+  plugin?: string;
+  kind: "skill" | "command";
+};
+
+const CATALOG_KEY = "ai:claude-catalog";
+
+export type SavedCatalog = ClaudeCatalog & { at: string };
+
+/** Claude Code's catalog from the last time Skele asked (instant on startup). */
+export const savedClaudeCatalog = () => appMeta.get<SavedCatalog>(CATALOG_KEY);
+
+/** Asks Claude Code again (free: its local /context command) and keeps the answer. */
+export async function refreshClaudeCatalog(path?: string): Promise<SavedCatalog | null> {
+  const c = await claudeCatalog(path);
+  if (c.error && !c.skills.length) return (await savedClaudeCatalog()) ?? null;
+  const saved = { ...c, at: now() };
+  await appMeta.set(CATALOG_KEY, saved);
+  return saved;
+}
+
+/** Short descriptions for skills that ship inside Claude Code (they have no file on disk). */
+const BUILTIN_SKILLS: Record<string, string> = {
+  simplify: "Review changed code for reuse, simplification and efficiency, then fix it",
+  "code-review": "Review the current diff for bugs",
+  "security-review": "Security review of the pending changes",
+  batch: "Run a task across many files or items in parallel",
+  loop: "Run a prompt or command on a recurring interval",
+  schedule: "Create and manage scheduled cloud agents",
+  debug: "Track down the cause of a bug",
+  verify: "Check that a change actually works",
+  "claude-api": "Build with the Claude API and Anthropic SDKs",
+  run: "Launch and drive this project's app",
+  "update-config": "Configure Claude Code's settings.json",
+  "fewer-permission-prompts": "Allowlist common read-only commands",
+  dataviz: "Make charts and data visualizations",
+  "plugin-authoring": "Write a Claude Code mod or plugin",
+  "skill-creator": "Create and improve skills",
+  init: "Write a CLAUDE.md for this project",
+};
+
+const bare = (name: string) => name.slice(name.indexOf(":") + 1);
+const pluginOf = (name: string) => (name.includes(":") ? name.slice(0, name.indexOf(":")) : undefined);
+
+/**
+ * The "/" menu entries for a CLI. Claude Code: everything it reported (its own skills, plugin
+ * skills and plugin commands), with descriptions from disk; plus skill folders it hasn't
+ * reported yet. Codex: its skill folders.
+ */
+export function skillEntries(tool: CliTool, local: Skill[], catalog: ClaudeCatalog | null | undefined): SkillEntry[] {
+  const out = new Map<string, SkillEntry>();
+  const localDesc = new Map(local.filter((s) => s.tool === tool).map((s) => [s.name, s.description]));
+  if (tool === "claude" && catalog) {
+    const describe = (name: string) => catalog.descriptions[bare(name)] ?? localDesc.get(bare(name)) ?? BUILTIN_SKILLS[bare(name)] ?? null;
+    for (const name of catalog.skills) out.set(name, { name, description: describe(name), plugin: pluginOf(name), kind: "skill" });
+    for (const name of catalog.commands) {
+      if (!name.includes(":") || out.has(name)) continue;
+      out.set(name, { name, description: describe(name), plugin: pluginOf(name), kind: "command" });
+    }
+  }
+  for (const s of local) {
+    if (s.tool !== tool || out.has(s.name)) continue;
+    out.set(s.name, { name: s.name, description: s.description, kind: "skill" });
+  }
+  return [...out.values()].sort((a, b) => Number(!!a.plugin) - Number(!!b.plugin) || a.name.localeCompare(b.name));
+}
+
+/** Plugins Claude Code loaded, with the skills/commands each adds (built-in ones left out). */
+export function catalogPlugins(catalog: ClaudeCatalog): { name: string; source?: string; entries: string[] }[] {
+  const byPlugin = new Map<string, Set<string>>();
+  for (const name of [...catalog.skills, ...catalog.commands]) {
+    const p = pluginOf(name);
+    if (p) byPlugin.set(p, (byPlugin.get(p) ?? new Set()).add(name));
+  }
+  const list = catalog.plugins
+    .filter((p) => p.path !== "builtin" && !p.source?.endsWith("@builtin"))
+    .map((p) => ({ name: p.name, source: p.source, entries: [...(byPlugin.get(p.name) ?? [])] }));
+  for (const [name, entries] of byPlugin) {
+    if (!list.some((p) => p.name === name)) list.push({ name, source: undefined, entries: [...entries] });
+  }
+  return list.sort((a, b) => a.name.localeCompare(b.name));
 }

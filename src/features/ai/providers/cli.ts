@@ -3,8 +3,8 @@
 // them into text, reasoning, activity, usage and refused tool uses.
 
 import { newId } from "@/data/common";
-import type { AccessMode, Effort, ModelOption, TurnUsage } from "../types";
-import type { TurnHandlers, TurnResult } from "./types";
+import { effortFor, type AccessMode, type Effort, type ModelOption, type TurnUsage } from "../types";
+import type { TurnHandlers, TurnImage, TurnResult } from "./types";
 
 export type CliTool = "claude" | "codex";
 
@@ -79,6 +79,8 @@ export function claudeParser(on: TurnHandlers) {
     text: "",
     thinking: "",
     sessionId: "",
+    /** The model Claude Code is running (from its init event). */
+    model: "",
     error: "",
     done: false,
     rateLimit: undefined as Json | undefined,
@@ -102,6 +104,7 @@ export function claudeParser(on: TurnHandlers) {
         on.session(state.sessionId);
       }
       if (event.type === "system" && event.subtype === "init") {
+        state.model = str(event.model);
         // MCP servers that couldn't start are worth knowing about.
         for (const s of (event.mcp_servers as Json[] | undefined) ?? []) {
           if (s.status === "failed") {
@@ -301,6 +304,8 @@ export type CliRunInput = {
   allowSkills?: boolean;
   /** Claude Code sub-agents. */
   agents?: Record<string, { description: string; prompt: string; model?: string }>;
+  /** Images sent with this message. */
+  images?: TurnImage[];
   signal: AbortSignal;
   on: TurnHandlers;
 };
@@ -329,6 +334,7 @@ export async function runCli(input: CliRunInput): Promise<TurnResult> {
     sessionId: parser.state.sessionId || undefined,
     usage: parser.state.usage,
     rateLimit: (parser.state as { rateLimit?: Json }).rateLimit,
+    modelId: (parser.state as { model?: string }).model || undefined,
   });
   try {
     const result = await invoke<RunResult>("ai_cli_run", {
@@ -337,7 +343,7 @@ export async function runCli(input: CliRunInput): Promise<TurnResult> {
         tool: input.tool,
         prompt: input.prompt,
         model: input.model || null,
-        effort: input.effort,
+        effort: effortFor(input.tool === "claude" ? "claude-cli" : "codex-cli", input.effort),
         sessionId: input.sessionId || null,
         systemPrompt: input.systemPrompt || null,
         path: input.path || null,
@@ -349,6 +355,7 @@ export async function runCli(input: CliRunInput): Promise<TurnResult> {
         useCliExtensions: !!input.useCliExtensions,
         allowSkills: !!input.allowSkills,
         agents: input.agents && Object.keys(input.agents).length ? input.agents : null,
+        images: input.images ?? [],
       },
       onEvent: channel,
     });
@@ -364,4 +371,25 @@ export async function runCli(input: CliRunInput): Promise<TurnResult> {
   } finally {
     input.signal.removeEventListener("abort", cancel);
   }
+}
+
+/** What Claude Code offers, as it reported when it last started (see `ai_claude_catalog`). */
+export type ClaudeCatalog = {
+  /** The model chats use when none is chosen, e.g. "claude-opus-5-5". */
+  model: string | null;
+  version: string | null;
+  /** Skills it can run; plugin skills are namespaced ("plugin:skill"). */
+  skills: string[];
+  /** Every slash command, including plugin commands. */
+  commands: string[];
+  plugins: { name: string; path?: string; source?: string }[];
+  /** Description per skill / command name (the part after "plugin:"). */
+  descriptions: Record<string, string>;
+  error: string | null;
+};
+
+/** Asks Claude Code what it offers. Runs its local /context command: no usage is spent. */
+export async function claudeCatalog(path?: string): Promise<ClaudeCatalog> {
+  const { invoke } = await tauri();
+  return invoke<ClaudeCatalog>("ai_claude_catalog", { path: path || null });
 }

@@ -1,23 +1,30 @@
 "use client";
 
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowUp, AtSign, FileText, Paperclip, Sparkles, Square, TerminalSquare, X } from "lucide-react";
+import { ArrowUp, AtSign, FileText, ImagePlus, Loader2, Paperclip, Puzzle, Sparkles, Square, TerminalSquare, X } from "lucide-react";
+import { toast } from "sonner";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PageIcon } from "@/components/common";
 import { cn } from "@/lib/utils";
 import { usePages } from "@/features/pages/hooks";
 import { SLASH_COMMANDS } from "../commands";
-import type { Skill } from "../extensions";
-import type { Agent, ContextPage } from "../types";
+import type { SkillEntry } from "../extensions";
+import { imageSrc, readClipboardImage, toChatImage } from "../images";
+import { MAX_CHAT_IMAGES, type Agent, type ChatImage, type ContextPage } from "../types";
+
+/** Commands that open a picker when sent without arguments. */
+const PICKER_COMMANDS = new Set(["model", "effort"]);
 
 export type ComposerHandle = { focus: () => void; setText: (text: string) => void; openPages: () => void };
 
 type MenuItem = {
   key: string;
-  kind: "command" | "skill" | "agent";
+  kind: "command" | "skill" | "plugin" | "agent";
   label: string;
   description?: string | null;
+  /** Shown on the right: "skill", "command" or the plugin's name. */
+  badge?: string;
   /** Text that replaces the typed token. */
   insert: string;
   /** Send right away (commands without arguments). */
@@ -50,13 +57,13 @@ export function Composer({
   workspaceId: string;
   running: boolean;
   disabled?: boolean;
-  onSend: (text: string, pages: ContextPage[]) => void;
+  onSend: (text: string, pages: ContextPage[], images: ChatImage[]) => void;
   onStop: () => void;
   toolbar?: ReactNode;
   /** Shown next to the send button (context size, limit warnings). */
   status?: ReactNode;
-  /** Skills that "/name" can invoke. */
-  skills?: Skill[];
+  /** Skills and plugin commands that "/name" can invoke. */
+  skills?: SkillEntry[];
   /** Agents that "@name" can mention. */
   agents?: Agent[];
   placeholder?: string;
@@ -66,7 +73,45 @@ export function Composer({
   const [caret, setCaret] = useState(0);
   const [pages, setPages] = useState<ContextPage[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [images, setImages] = useState<ChatImage[]>([]);
+  const [reading, setReading] = useState(0);
   const area = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  /** Adds pasted or picked images (downscaled), up to the limit. */
+  const addImages = async (blobs: Blob[], names: (string | undefined)[] = []) => {
+    if (!blobs.length) return;
+    const room = MAX_CHAT_IMAGES - images.length;
+    if (room <= 0) {
+      toast.error(`You can send up to ${MAX_CHAT_IMAGES} images with a message.`);
+      return;
+    }
+    setReading((n) => n + 1);
+    try {
+      const added: ChatImage[] = [];
+      for (const [i, blob] of blobs.slice(0, room).entries()) {
+        try {
+          added.push(await toChatImage(blob, names[i]));
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Couldn't add that image.");
+        }
+      }
+      setImages((list) => [...list, ...added].slice(0, MAX_CHAT_IMAGES));
+    } finally {
+      setReading((n) => n - 1);
+    }
+  };
+
+  /** Alt+V, and pastes the webview didn't turn into a file: read the system clipboard. */
+  const pasteFromClipboard = async (quiet = false) => {
+    try {
+      const blob = await readClipboardImage();
+      if (blob) await addImages([blob]);
+      else if (!quiet) toast("There's no image on the clipboard.");
+    } catch (e) {
+      if (!quiet) toast.error(e instanceof Error ? e.message : "Couldn't read the clipboard.");
+    }
+  };
 
   useImperativeHandle(ref, () => ({
     focus: () => area.current?.focus(),
@@ -88,13 +133,18 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 280)}px`;
   }, [text]);
 
-  const canSend = !running && !disabled && (text.trim().length > 0 || pages.length > 0);
+  const canSend = !running && !disabled && !reading && (text.trim().length > 0 || pages.length > 0 || images.length > 0);
   const submit = (override?: string) => {
     if (!canSend && !override) return;
     if (running || disabled) return;
-    onSend(override ?? (text.trim() || "Summarize the attached pages."), override ? [] : pages);
+    if (override) {
+      onSend(override, [], []);
+    } else {
+      onSend(text.trim() || (pages.length ? "Summarize the attached pages." : ""), pages, images);
+      setPages([]);
+      setImages([]);
+    }
     setText("");
-    if (!override) setPages([]);
   };
 
   // Typing "/" lists Skele's commands and skills; "@" lists agents.
@@ -109,21 +159,36 @@ export function Composer({
         .slice(0, 8)
         .map((a) => ({ key: a.id, kind: "agent", label: `@${a.name}`, description: a.description, insert: `@${a.name} ` }));
     }
-    const commands: MenuItem[] = SLASH_COMMANDS.filter((c) => c.name.startsWith(q)).map((c) => ({
-      key: `c:${c.name}`,
-      kind: "command",
-      label: `/${c.name}`,
-      description: c.args ? `${c.description} · ${c.args}` : c.description,
-      insert: c.args ? `/${c.name} ` : `/${c.name}`,
-      submit: !c.args,
-    }));
-    const seen = new Set<string>();
-    const skillItems: MenuItem[] = [];
-    for (const sk of skills) {
-      if (!sk.name.startsWith(q) || seen.has(sk.name) || skillItems.length >= 12) continue;
-      seen.add(sk.name);
-      skillItems.push({ key: `s:${sk.name}`, kind: "skill", label: `/${sk.name}`, description: sk.description, insert: `/${sk.name} ` });
-    }
+    const commands: MenuItem[] = SLASH_COMMANDS.filter((c) => c.name.startsWith(q)).map((c) => {
+      const picker = PICKER_COMMANDS.has(c.name);
+      return {
+        key: `c:${c.name}`,
+        kind: "command",
+        label: `/${c.name}`,
+        description: c.description,
+        insert: c.args && !picker ? `/${c.name} ` : `/${c.name}`,
+        submit: !c.args || picker,
+      };
+    });
+    // Skills match on their whole name or the part after "plugin:", then anywhere in it.
+    const rank = (name: string) => {
+      const bare = name.slice(name.indexOf(":") + 1);
+      if (name.toLowerCase().startsWith(q) || bare.toLowerCase().startsWith(q)) return 0;
+      return name.toLowerCase().includes(q) ? 1 : -1;
+    };
+    const skillItems: MenuItem[] = skills
+      .map((sk) => ({ sk, r: rank(sk.name) }))
+      .filter((x) => x.r >= 0)
+      .sort((a, b) => a.r - b.r)
+      .slice(0, 40)
+      .map(({ sk }) => ({
+        key: `s:${sk.name}`,
+        kind: sk.plugin ? "plugin" : "skill",
+        label: `/${sk.name}`,
+        description: sk.description,
+        badge: sk.plugin ?? sk.kind,
+        insert: `/${sk.name} `,
+      }));
     return [...commands, ...skillItems];
   }, [query?.kind, query?.query, agents, skills]); // eslint-disable-line react-hooks/exhaustive-deps
   const menuKey = query ? `${query.kind}:${query.start}` : null;
@@ -155,11 +220,11 @@ export function Composer({
       {menuOpen && (
         <div
           role="listbox"
-          aria-label={query?.kind === "mention" ? "Agents" : "Commands and skills"}
+          aria-label={query?.kind === "mention" ? "Agents" : "Commands, skills and plugins"}
           className="absolute inset-x-0 bottom-full mb-2 max-h-80 overflow-y-auto rounded-xl border bg-popover p-1 shadow-lg scrollbar-thin"
         >
           {items.map((c, i) => {
-            const Icon = c.kind === "agent" ? AtSign : c.kind === "skill" ? Sparkles : TerminalSquare;
+            const Icon = c.kind === "agent" ? AtSign : c.kind === "plugin" ? Puzzle : c.kind === "skill" ? Sparkles : TerminalSquare;
             return (
               <button
                 key={c.key}
@@ -173,11 +238,34 @@ export function Composer({
               >
                 <Icon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} />
                 <span className="shrink-0 font-mono font-medium">{c.label}</span>
-                {c.description && <span className="truncate text-muted-foreground">{c.description}</span>}
-                {c.kind === "skill" && <span className="ml-auto shrink-0 text-xs text-muted-foreground">skill</span>}
+                {c.description && <span className="min-w-0 truncate text-muted-foreground">{c.description}</span>}
+                {c.badge && <span className="ml-auto max-w-40 shrink-0 truncate pl-2 text-xs text-muted-foreground">{c.badge}</span>}
               </button>
             );
           })}
+        </div>
+      )}
+      {(images.length > 0 || reading > 0) && (
+        <div className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Images to send">
+          {images.map((img, i) => (
+            <span key={img.id} className="group/img relative size-16 overflow-hidden rounded-lg border bg-muted">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={imageSrc(img)} alt={img.name ?? `Image ${i + 1}`} className="size-full object-cover" />
+              <button
+                type="button"
+                aria-label={`Remove image ${i + 1}`}
+                onClick={() => setImages(images.filter((x) => x.id !== img.id))}
+                className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-background/90 text-foreground shadow-sm opacity-0 group-hover/img:opacity-100 focus-visible:opacity-100"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+          {reading > 0 && (
+            <span className="flex size-16 items-center justify-center rounded-lg border bg-muted text-muted-foreground" aria-label="Adding image">
+              <Loader2 className="size-4 animate-spin" />
+            </span>
+          )}
         </div>
       )}
       {pages.length > 0 && (
@@ -211,7 +299,27 @@ export function Composer({
           setHighlight(0);
         }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+        onPaste={(e) => {
+          const data = e.clipboardData;
+          const files = [...data.files].filter((f) => f.type.startsWith("image/"));
+          if (files.length) {
+            e.preventDefault();
+            void addImages(files, files.map((f) => f.name));
+            return;
+          }
+          // A bitmap or a copied image file the webview didn't hand over as a file.
+          if (!data.types.includes("text/plain") && !data.types.includes("text/html")) {
+            e.preventDefault();
+            void pasteFromClipboard(true);
+          }
+        }}
         onKeyDown={(e) => {
+          if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyV") {
+            // Alt+V pastes an image, as in Claude Code.
+            e.preventDefault();
+            void pasteFromClipboard();
+            return;
+          }
           if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
             e.preventDefault();
             setHighlight((active + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length);
@@ -239,6 +347,27 @@ export function Composer({
           selected={pages}
           onPick={(p) => {
             setPages((list) => (list.some((x) => x.id === p.id) ? list.filter((x) => x.id !== p.id) : [...list, p]));
+          }}
+        />
+        <button
+          type="button"
+          title="Add images (or paste with Ctrl+V / Alt+V)"
+          aria-label="Add images"
+          onClick={() => fileInput.current?.click()}
+          className="flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ImagePlus className="size-4" strokeWidth={1.75} />
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+          multiple
+          hidden
+          onChange={(e) => {
+            const files = [...(e.target.files ?? [])];
+            e.target.value = "";
+            void addImages(files, files.map((f) => f.name));
           }}
         />
         {toolbar}

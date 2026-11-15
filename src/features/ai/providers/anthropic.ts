@@ -5,6 +5,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Effort } from "../types";
 import type { TurnHandlers, TurnMessage, TurnResult } from "./types";
 
+/** A message for the API: text, plus image blocks before it when the message has images. */
+function toParam(m: TurnMessage): Anthropic.Beta.BetaMessageParam {
+  if (!m.images?.length) return { role: m.role, content: m.content };
+  return {
+    role: m.role,
+    content: [
+      ...m.images.map((i) => ({ type: "image" as const, source: { type: "base64" as const, media_type: i.mediaType, data: i.data } })),
+      { type: "text" as const, text: m.content || "(image)" },
+    ],
+  };
+}
+
 // Models that accept the server-side refusal fallback.
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"]);
 
@@ -27,7 +39,7 @@ export async function streamAnthropic(input: {
         model: input.model,
         max_tokens: 64000,
         system: input.system,
-        messages: input.messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: input.messages.map(toParam),
         thinking: { type: "adaptive", display: input.showThinking ? "summarized" : "omitted" },
         output_config: { effort: input.effort },
         ...(FALLBACK_MODELS.has(input.model)

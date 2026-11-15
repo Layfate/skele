@@ -3,7 +3,7 @@
 // Any other "/name" is a skill and goes to Claude Code / Codex.
 
 import { isDesktop } from "@/lib/desktop";
-import { listSkills } from "./extensions";
+import { catalogPlugins, listSkills, refreshClaudeCatalog, savedClaudeCatalog, skillEntries } from "./extensions";
 import { claudeWindows, codexWindows, getLedger, ledgerTotals } from "./limits";
 import { cliAuth, cliStatus, codexModels, codexUsage, runCli } from "./providers/cli";
 import { listOllamaModels, ollamaStatus } from "./providers/ollama";
@@ -13,7 +13,13 @@ import { providerAvailable, SKELE_COMMANDS } from "./run";
 import {
   ANTHROPIC_MODELS,
   CLAUDE_CLI_MODELS,
+  CLAUDE_MORE_MODELS,
+  EFFORTS,
+  effortFor,
   isCli,
+  isEffort,
+  maxEffort,
+  prettyModel,
   PROVIDERS,
   type Agent,
   type AccessMode,
@@ -32,10 +38,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "usage", description: "Plan limits and tokens used" },
   { name: "status", description: "Accounts, versions and this chat's setup" },
   { name: "compact", description: "Summarize the chat so far to save context" },
-  { name: "model", description: "Show or switch this chat's model", args: "[model]" },
+  { name: "model", description: "Choose the model and its version", args: "[model]" },
+  { name: "effort", description: "How hard the model thinks: low to max", args: "[low|medium|high|xhigh|max]" },
   { name: "mode", description: "What the AI may do: chat, read or edit files", args: "[chat|read|edit]" },
   { name: "mcp", description: "MCP servers for this chat" },
-  { name: "skills", description: "Installed skills (type /name to use one)" },
+  { name: "skills", description: "Skills, including plugin skills (type /name to use one)" },
+  { name: "plugins", description: "Plugins Claude Code has loaded, and what they add" },
   { name: "agents", description: "Your agents (type @name to ask one)" },
   { name: "new", description: "Start a new chat" },
   { name: "help", description: "What you can do here" },
@@ -129,7 +137,7 @@ function usageText(blocks: UsageBlock[], extra: string[]) {
 export async function modelsFor(provider: ProviderId, settings: AiSettings): Promise<ModelOption[]> {
   switch (provider) {
     case "claude-cli":
-      return CLAUDE_CLI_MODELS;
+      return [...CLAUDE_CLI_MODELS, ...CLAUDE_MORE_MODELS];
     case "codex-cli":
       return [{ id: "", label: "Default", hint: "Codex's configured model" }, ...(await codexModels().catch(() => []))];
     case "anthropic":
@@ -147,7 +155,7 @@ export type CommandResult = {
   content: string;
   card?: InfoCard;
   /** Changes to apply to the chat (/model, /mode). */
-  patch?: Partial<Pick<Chat, "model" | "mode">>;
+  patch?: Partial<Pick<Chat, "model" | "mode" | "effort">>;
   /** Run /compact (summarize) after showing `content`. */
   compact?: boolean;
 };
@@ -168,10 +176,11 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
         "**Things you can do here**",
         "- Ask anything, or attach pages with **Pages** so the AI can read them.",
         "- Switch between Claude, Codex and local models at any time from the message box; the new one sees the conversation so far.",
-        "- **Quick / Balanced / Thorough** sets how long the model thinks.",
+        "- The model menu shows each model's version; **effort** (low → max) sets how long it thinks. `/model` and `/effort` open them too.",
+        "- Paste an image with **Ctrl+V** or **Alt+V** (or the image button) to send it with your message.",
         desktop ? "- The **shield** button sets what Claude Code and Codex may do: just chat, read files in a folder, or edit them. MCP servers and web search are turned on there too." : "",
         "- Type **@** to ask one of your agents (several at once if you like); they answer side by side.",
-        desktop ? "- Type **/** and a skill's name to use a skill." : "",
+        desktop ? "- Type **/** to pick a skill, including skills and commands from Claude Code plugins." : "",
         "- Hover a reply to copy it, try again, or save it as a page. Hover your own message to edit it.",
         "",
         "**Commands**",
@@ -189,7 +198,7 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
   if (name === "model") {
     const options = await modelsFor(chat.provider, settings);
     if (!args) {
-      const current = options.find((m) => m.id === chat.model)?.label ?? (chat.model || "Default");
+      const current = options.find((m) => m.id === chat.model)?.label ?? (prettyModel(chat.model) || "Default");
       return {
         content: [
           `**${PROVIDERS[chat.provider].label}** · ${current}`,
@@ -208,6 +217,48 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
     return {
       content: `Switched to **${known?.label ?? (model || "Default")}**${known || !options.length ? "" : " (not in the known list; it will be tried as-is)"}.`,
       patch: { model },
+    };
+  }
+
+  if (name === "effort") {
+    const max = maxEffort(chat.provider);
+    if (!max) return { content: `${PROVIDERS[chat.provider].label} has no effort setting.` };
+    const allowed = EFFORTS.slice(0, EFFORTS.findIndex((e) => e.id === max) + 1);
+    if (!args) {
+      return {
+        content: [
+          `Effort: **${effortFor(chat.provider, chat.effort)}**`,
+          "",
+          ...allowed.map((e) => `- \`${e.id}\`: ${e.hint}`),
+          "",
+          "Switch with `/effort <level>`.",
+        ].join("\n"),
+      };
+    }
+    const wanted = args.toLowerCase();
+    if (!isEffort(wanted)) return { content: `Use ${EFFORTS.map((e) => `\`/effort ${e.id}\``).join(", ")}.` };
+    const used = effortFor(chat.provider, wanted);
+    return {
+      content: `Effort set to **${wanted}**${used !== wanted ? ` (${PROVIDERS[chat.provider].label} goes up to ${used}, so it uses ${used})` : ""}.`,
+      patch: { effort: wanted },
+    };
+  }
+
+  if (name === "plugins") {
+    if (!desktop) return { content: "Plugins are available in the Skele desktop app." };
+    const catalog = (await refreshClaudeCatalog(settings.claudePath).catch(() => null)) ?? (await savedClaudeCatalog());
+    const plugins = catalog ? catalogPlugins(catalog) : [];
+    if (!plugins.length) return { content: "Claude Code hasn't loaded any plugins. Browse and install them in **Settings → AI → Plugins**." };
+    return {
+      content: [
+        "**Claude Code plugins**",
+        ...plugins.map(
+          (p) =>
+            `- **${p.name}**${p.source ? ` (${p.source})` : ""}${p.entries.length ? `: ${p.entries.map((e) => `\`/${e}\``).join(", ")}` : ""}`,
+        ),
+        "",
+        "Type `/` and a name to use what a plugin adds. Manage plugins in **Settings → AI → Plugins**.",
+      ].join("\n"),
     };
   }
 
@@ -250,16 +301,16 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
 
   if (name === "skills") {
     if (!desktop) return { content: "Skills are available in the Skele desktop app." };
-    const skills = await listSkills().catch(() => []);
-    if (!skills.length) return { content: "No skills installed. Create or import one in **Settings → AI → Skills**." };
+    const [skills, catalog] = await Promise.all([listSkills().catch(() => []), savedClaudeCatalog().catch(() => undefined)]);
     const lines: string[] = [];
     for (const tool of ["claude", "codex"] as const) {
-      const list = skills.filter((s) => s.tool === tool);
+      const list = skillEntries(tool, skills, catalog);
       if (!list.length) continue;
       lines.push(`**${tool === "claude" ? "Claude Code" : "Codex"}**`);
       lines.push(...list.map((s) => `- \`/${s.name}\`${s.description ? `: ${s.description}` : ""}`));
       lines.push("");
     }
+    if (!lines.length) return { content: "No skills installed. Create or import one in **Settings → AI → Skills**." };
     lines.push("Type `/` and a skill's name, followed by what you want, to use it.");
     return { content: lines.join("\n") };
   }
@@ -303,7 +354,7 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
   // status
   const mode = chat.mode ?? "chat";
   const lines = [
-    `**This chat:** ${PROVIDERS[chat.provider].label}${chat.model ? ` · ${chat.model}` : " · default model"} · ${chat.effort} thinking`,
+    `**This chat:** ${PROVIDERS[chat.provider].label}${chat.model ? ` · ${prettyModel(chat.model)}` : " · default model"}${maxEffort(chat.provider) ? ` · ${effortFor(chat.provider, chat.effort)} effort` : ""}`,
     cli ? `**Access:** ${MODES[mode].replace(/\*\*/g, "")}${mode !== "chat" && chat.folder ? ` (\`${chat.folder}\`)` : ""}${chat.web ? " · web search on" : ""}` : "",
     cli && chat.mcp?.length
       ? `**MCP servers:** ${ctx.mcp

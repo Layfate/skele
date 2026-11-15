@@ -22,6 +22,8 @@ pub struct MediaSession {
     pub can_previous: bool,
     pub can_next: bool,
     pub can_play_pause: bool,
+    /// The app accepts a new playback position (seeking).
+    pub can_seek: bool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -35,6 +37,12 @@ pub async fn media_session() -> CmdResult<Option<MediaSession>> {
 #[tauri::command]
 pub async fn media_control(action: String) -> CmdResult<bool> {
     run_blocking(move || imp::control(&action)).await
+}
+
+/// Jumps to `position_ms` in the current track.
+#[tauri::command]
+pub async fn media_seek(position_ms: u64) -> CmdResult<bool> {
+    run_blocking(move || imp::seek(position_ms)).await
 }
 
 /// Cover art of the current track as raw image bytes (empty when there is none).
@@ -175,7 +183,27 @@ mod imp {
             can_play_pause: controls.IsPlayPauseToggleEnabled().unwrap_or(false)
                 || controls.IsPlayEnabled().unwrap_or(false)
                 || controls.IsPauseEnabled().unwrap_or(false),
+            can_seek: controls.IsPlaybackPositionEnabled().unwrap_or(false),
         }))
+    }
+
+    pub fn seek(position_ms: u64) -> CmdResult<bool> {
+        let Some(session) = spotify_session()? else {
+            return Err("Spotify isn't open on this computer.".into());
+        };
+        let timeline = session.GetTimelineProperties().map_err(err)?;
+        let start = timeline.StartTime().map(|t| t.Duration).unwrap_or(0);
+        let end = timeline.EndTime().map(|t| t.Duration).unwrap_or(0);
+        // Windows counts in 100-nanosecond ticks from the track's start time.
+        let mut ticks = start + (position_ms as i64).saturating_mul(10_000);
+        if end > start {
+            ticks = ticks.min(end - 10_000);
+        }
+        session
+            .TryChangePlaybackPositionAsync(ticks.max(start))
+            .map_err(err)?
+            .join()
+            .map_err(err)
     }
 
     pub fn control(action: &str) -> CmdResult<bool> {
@@ -227,6 +255,10 @@ mod imp {
     }
 
     pub fn control(_action: &str) -> CmdResult<bool> {
+        Err("Controlling the Spotify app is only available on Windows.".into())
+    }
+
+    pub fn seek(_position_ms: u64) -> CmdResult<bool> {
         Err("Controlling the Spotify app is only available on Windows.".into())
     }
 

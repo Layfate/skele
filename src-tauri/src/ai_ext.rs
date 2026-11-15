@@ -937,9 +937,238 @@ pub async fn ai_skill_import(app: tauri::AppHandle, tool: String) -> CmdResult<O
     Ok(Some(name))
 }
 
+// ── What Claude Code offers: skills, plugin skills and commands, its default model ─────
+
+/// What Claude Code reports when it starts (its `init` event), plus descriptions found on
+/// disk for the skills and plugin commands it lists.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeCatalog {
+    /// The model a chat with no model chosen uses, e.g. `claude-opus-5-5`.
+    model: Option<String>,
+    version: Option<String>,
+    /// Skills it can run, plugin skills namespaced (`plugin:skill`).
+    skills: Vec<String>,
+    /// All slash commands (built-in, skills, plugin commands).
+    commands: Vec<String>,
+    /// Loaded plugins: `{ name, path, source }`.
+    plugins: Vec<serde_json::Value>,
+    /// Description per skill or command name (the part after `plugin:`).
+    descriptions: std::collections::BTreeMap<String, String>,
+    error: Option<String>,
+}
+
+fn str_list(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn catalog_from_init(init: &serde_json::Value) -> ClaudeCatalog {
+    ClaudeCatalog {
+        model: init["model"].as_str().map(String::from),
+        version: init["claude_code_version"].as_str().map(String::from),
+        skills: str_list(&init["skills"]),
+        commands: str_list(&init["slash_commands"]),
+        plugins: init["plugins"].as_array().cloned().unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
+/// Descriptions of skills (`*/SKILL.md`) and commands (`commands/*.md`) under `root`, a few
+/// levels deep (plugin caches nest them under marketplace/plugin/version folders).
+pub fn collect_descriptions(
+    root: &Path,
+    depth: usize,
+    out: &mut std::collections::BTreeMap<String, String>,
+    budget: &mut usize,
+) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for e in entries.flatten() {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "node_modules" {
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+        let skill = path.join(SKILL_FILE);
+        if skill.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&skill) {
+                if let (_, Some(d)) = front_matter(&text) {
+                    out.entry(name.clone()).or_insert(d);
+                }
+            }
+            continue;
+        }
+        if name == "commands" {
+            for c in std::fs::read_dir(&path).into_iter().flatten().flatten() {
+                let p = c.path();
+                if p.extension().and_then(|x| x.to_str()) != Some("md") {
+                    continue;
+                }
+                let Some(stem) = p.file_stem().map(|s| s.to_string_lossy().to_string()) else {
+                    continue;
+                };
+                if let Ok(text) = std::fs::read_to_string(&p) {
+                    if let (_, Some(d)) = front_matter(&text) {
+                        out.entry(stem).or_insert(d);
+                    }
+                }
+            }
+            continue;
+        }
+        if depth > 0 {
+            collect_descriptions(&path, depth - 1, out, budget);
+        }
+    }
+}
+
+fn claude_descriptions() -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let Some(h) = claude_home() else {
+        return out;
+    };
+    let mut budget = 20_000;
+    collect_descriptions(&h.join("skills"), 3, &mut out, &mut budget);
+    // Depth 0 on the config folder itself picks up personal `commands/*.md`.
+    collect_descriptions(&h, 0, &mut out, &mut budget);
+    for sub in ["cache", "synced", "marketplaces"] {
+        collect_descriptions(&h.join("plugins").join(sub), 6, &mut out, &mut budget);
+    }
+    out
+}
+
+/// Starts Claude Code just long enough to read what it offers. It's asked to run `/context`,
+/// a local command that never reaches the model (no usage is spent); Skele stops it as soon
+/// as the `init` event arrives.
+#[tauri::command]
+pub async fn ai_claude_catalog(
+    location: tauri::State<'_, crate::paths::DataLocation>,
+    path: Option<String>,
+) -> CmdResult<ClaudeCatalog> {
+    let exe = find_tool(Tool::Claude, path.as_deref())
+        .ok_or_else(|| "Claude Code isn't installed.".to_string())?;
+    let workdir = location.root.join("ai");
+    tauri::async_runtime::spawn_blocking(move || -> CmdResult<ClaudeCatalog> {
+        std::fs::create_dir_all(&workdir).map_err(|e| e.to_string())?;
+        let mut child = command(&exe)
+            .args([
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--tools",
+                "",
+                "--permission-prompts",
+                "none",
+                "--strict-mcp-config",
+                "--no-session-persistence",
+            ])
+            .current_dir(&workdir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Couldn't start Claude Code: {e}"))?;
+        let pid = child.id();
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(b"/context");
+        }
+        let stdout = child.stdout.take();
+        let (tx, rx) = mpsc::channel::<serde_json::Value>();
+        std::thread::spawn(move || {
+            let Some(stdout) = stdout else { return };
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if v["type"] == "system" && v["subtype"] == "init" {
+                        let _ = tx.send(v);
+                        break;
+                    }
+                }
+            }
+        });
+        let init = rx.recv_timeout(Duration::from_secs(45));
+        kill_tree(pid);
+        let _ = child.kill();
+        let _ = child.wait();
+        let mut catalog = match init {
+            Ok(v) => catalog_from_init(&v),
+            Err(_) => ClaudeCatalog {
+                error: Some("Claude Code didn't start in time.".into()),
+                ..Default::default()
+            },
+        };
+        catalog.descriptions = claude_descriptions();
+        Ok(catalog)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_claude_init_event_and_skill_descriptions() {
+        let init = serde_json::json!({
+            "type": "system", "subtype": "init", "model": "claude-opus-5-5",
+            "claude_code_version": "2.1.325",
+            "skills": ["simplify", "anthropic-skills:pdf"],
+            "slash_commands": ["simplify", "context", "anthropic-skills:pdf"],
+            "plugins": [{ "name": "remotion", "path": "x", "source": "remotion@remotion" }],
+        });
+        let c = catalog_from_init(&init);
+        assert_eq!(c.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(c.skills, vec!["simplify", "anthropic-skills:pdf"]);
+        assert_eq!(c.commands.len(), 3);
+        assert_eq!(c.plugins.len(), 1);
+
+        let dir = tempfile::tempdir().unwrap();
+        let skill = dir
+            .path()
+            .join("mkt")
+            .join("plug")
+            .join("1.0")
+            .join("skills")
+            .join("pdf");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: pdf\ndescription: Work with PDFs\n---\nBody",
+        )
+        .unwrap();
+        let cmds = dir
+            .path()
+            .join("mkt")
+            .join("plug")
+            .join("1.0")
+            .join("commands");
+        std::fs::create_dir_all(&cmds).unwrap();
+        std::fs::write(
+            cmds.join("deploy.md"),
+            "---\ndescription: Ship it\n---\nDo it",
+        )
+        .unwrap();
+        let mut out = std::collections::BTreeMap::new();
+        let mut budget = 1000;
+        collect_descriptions(dir.path(), 6, &mut out, &mut budget);
+        assert_eq!(out.get("pdf").map(String::as_str), Some("Work with PDFs"));
+        assert_eq!(out.get("deploy").map(String::as_str), Some("Ship it"));
+    }
 
     #[test]
     fn management_commands_are_fixed_and_validated() {

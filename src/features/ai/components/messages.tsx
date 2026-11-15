@@ -7,7 +7,9 @@ import { PageIcon } from "@/components/common";
 import { cn } from "@/lib/utils";
 import type { LiveRun } from "../hooks";
 import { LogoMark } from "@/components/logo";
-import { PROVIDERS, type ChatMessage, type TurnUsage, type UsageBlock } from "../types";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { imageSrc } from "../images";
+import { effortFor, maxEffort, prettyModel, PROVIDERS, type ChatImage, type ChatMessage, type TurnUsage, type UsageBlock } from "../types";
 import { copyText, Markdown } from "./markdown";
 import { modelLabel, ProviderIcon } from "./provider-menu";
 
@@ -65,11 +67,48 @@ function Disclosure({ icon: Icon, label, children, defaultOpen = false }: { icon
   );
 }
 
+/** Images sent with a message; click one to see it full size. */
+function MessageImages({ images }: { images: ChatImage[] }) {
+  const [open, setOpen] = useState<ChatImage | null>(null);
+  return (
+    <>
+      <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+        {images.map((img, i) => (
+          <button
+            key={img.id}
+            type="button"
+            onClick={() => setOpen(img)}
+            aria-label={`View image ${i + 1}`}
+            className="overflow-hidden rounded-xl border bg-muted transition hover:opacity-90"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageSrc(img)}
+              alt={img.name ?? `Image ${i + 1}`}
+              className={cn("object-cover", images.length === 1 ? "max-h-64 max-w-80" : "size-24")}
+            />
+          </button>
+        ))}
+      </div>
+      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
+        <DialogContent className="max-w-[min(92vw,1100px)] p-2 sm:max-w-[min(92vw,1100px)]">
+          <DialogTitle className="sr-only">{open?.name ?? "Image"}</DialogTitle>
+          {open && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={imageSrc(open)} alt={open.name ?? "Image"} className="max-h-[85vh] w-full rounded-md object-contain" />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export function UserMessage({ message, onEdit, editable }: { message: ChatMessage; onEdit: (text: string) => void; editable: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   return (
     <div className="group/msg flex flex-col items-end gap-1.5">
+      {message.images && message.images.length > 0 && <MessageImages images={message.images} />}
       {message.pages && (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
           {message.pages.map((p) => (
@@ -116,9 +155,11 @@ export function UserMessage({ message, onEdit, editable }: { message: ChatMessag
           </div>
         </div>
       ) : (
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 whitespace-pre-wrap break-words">
-          {message.content}
-        </div>
+        message.content && (
+          <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 whitespace-pre-wrap break-words">
+            {message.content}
+          </div>
+        )
       )}
       {!editing && (
         <div className="flex gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
@@ -147,9 +188,12 @@ export function AssistantMessage({
   isLast,
   onRegenerate,
   onSaveAsPage,
+  claudeDefault,
 }: {
   message?: ChatMessage;
   live?: LiveRun;
+  /** Claude Code's default model, for replies that used it without saying which it was. */
+  claudeDefault?: string | null;
   showThinking: boolean;
   isLast?: boolean;
   onRegenerate?: () => void;
@@ -163,6 +207,14 @@ export function AssistantMessage({
   const agentName = message?.agentName ?? live?.agentName;
   const streaming = !!live;
   const local = !!(message?.local ?? live?.local);
+  const modelName = message?.modelId
+    ? prettyModel(message.modelId)
+    : model
+      ? modelLabel(provider, model).replace(/^Claude /, "")
+      : provider === "claude-cli" && claudeDefault && !message
+        ? prettyModel(claudeDefault)
+        : "";
+  const effort = message?.effort && maxEffort(provider) ? effortFor(provider, message.effort) : undefined;
 
   return (
     <div className="group/msg flex gap-3">
@@ -177,7 +229,8 @@ export function AssistantMessage({
         <p className="mb-1 flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <span className="font-medium text-foreground/90">{local ? "Skele" : agentName ? `@${agentName}` : PROVIDERS[provider].short}</span>
           {!local && agentName && <span>· {PROVIDERS[provider].short}</span>}
-          {!local && model && <span className="truncate">· {modelLabel(provider, model).replace(/^Claude /, "")}</span>}
+          {!local && modelName && <span className="truncate">· {modelName}</span>}
+          {!local && effort && <span className="shrink-0" title="Effort">· {effort}</span>}
         </p>
         {message?.fallback && (
           <p className="mb-2 flex items-center gap-1.5 text-[13px] text-muted-foreground">

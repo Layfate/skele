@@ -12,14 +12,14 @@ import { isDesktop } from "@/lib/desktop";
 import * as store from "./store";
 import { listAgents, mentionedAgents } from "./agents";
 import { chatTokens, contextBudget } from "./context";
-import { chatServers, listMcpServers, listSkills } from "./extensions";
+import { chatServers, listMcpServers, listSkills, refreshClaudeCatalog, savedClaudeCatalog, skillEntries, type SkillEntry } from "./extensions";
 import { runWithFallback } from "./fallback";
 import { getLedger, providerLimit, recordUsage, refreshCodexLimit } from "./limits";
 import { codexModels } from "./providers/cli";
 import { listOllamaModels } from "./providers/ollama";
 import { resolveTarget, sessionKey, summarizeChat, titleFrom } from "./run";
 import { runCommand } from "./commands";
-import { isCli, type Agent, type AiSettings, type Chat, type ChatMessage, type ContextPage, type ProviderId } from "./types";
+import { isCli, type Agent, type AiSettings, type Chat, type ChatImage, type ChatMessage, type ContextPage, type ProviderId } from "./types";
 
 export const aiKeys = {
   list: (ws: string) => ["ai-chats", ws] as const,
@@ -28,6 +28,7 @@ export const aiKeys = {
   mcp: ["ai-mcp"] as const,
   agents: ["ai-agents"] as const,
   skills: ["ai-skills"] as const,
+  claudeCatalog: ["ai-claude-catalog"] as const,
   ledger: ["ai-ledger"] as const,
   limit: (p: ProviderId) => ["ai-limit", p] as const,
   ollamaModels: (url: string) => ["ollama-models", url] as const,
@@ -55,6 +56,39 @@ export const useMcpServers = () => useQuery({ queryKey: aiKeys.mcp, queryFn: lis
 export const useAgents = () => useQuery({ queryKey: aiKeys.agents, queryFn: listAgents, staleTime: Infinity });
 export const useSkills = (enabled = true) =>
   useQuery({ queryKey: aiKeys.skills, queryFn: listSkills, enabled: enabled && isDesktop(), staleTime: 5 * 60_000 });
+/**
+ * Claude Code's skills, plugins and default model. Shows the saved copy at once, then asks
+ * Claude Code again in the background (its free local /context command).
+ */
+export function useClaudeCatalog(enabled: boolean, path?: string) {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: aiKeys.claudeCatalog,
+    queryFn: async () => {
+      const saved = await savedClaudeCatalog();
+      const fresh = refreshClaudeCatalog(path).catch(() => null);
+      if (saved) {
+        // Show what we had; update when Claude Code answers.
+        void fresh.then((c) => c && qc.setQueryData(aiKeys.claudeCatalog, c));
+        return saved;
+      }
+      return (await fresh) ?? null;
+    },
+    enabled: enabled && isDesktop(),
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+}
+
+/** The "/" menu's skills and plugin commands for a provider (CLI providers only). */
+export function useSkillEntries(provider: ProviderId | null, path?: string): SkillEntry[] {
+  const cli = !!provider && isCli(provider) && isDesktop();
+  const local = useSkills(cli);
+  const catalog = useClaudeCatalog(cli && provider === "claude-cli", path);
+  if (!cli) return [];
+  return skillEntries(provider === "claude-cli" ? "claude" : "codex", local.data ?? [], catalog.data);
+}
+
 export const useLedger = () => useQuery({ queryKey: aiKeys.ledger, queryFn: getLedger });
 export const useCodexModels = (enabled: boolean) =>
   useQuery({ queryKey: aiKeys.codexModels, queryFn: codexModels, enabled: enabled && isDesktop(), staleTime: 30 * 60_000 });
@@ -272,6 +306,8 @@ export function useChatActions(workspaceId: string, workspaceName?: string) {
           denied: r.denied?.length ? r.denied : undefined,
           provider: r.provider,
           model: r.model,
+          modelId: r.modelId,
+          effort: chat.effort,
           agentId: agent?.id,
           agentName: agent?.name,
           fallback,
@@ -311,7 +347,7 @@ export function useChatActions(workspaceId: string, workspaceName?: string) {
   }
 
   return {
-    send: (chatId: string, text: string, pages: ContextPage[] = []) =>
+    send: (chatId: string, text: string, pages: ContextPage[] = [], images: ChatImage[] = []) =>
       guarded(async () => {
         if (controllers.has(chatId)) return;
         const context = await pagesContext(workspaceId, pages);
@@ -321,11 +357,12 @@ export function useChatActions(workspaceId: string, workspaceName?: string) {
           content: text,
           pages: pages.length ? pages : undefined,
           context: context || undefined,
+          images: images.length ? images : undefined,
           createdAt: now(),
         };
         const chat = await store.updateChat(chatId, (c) => ({
           ...c,
-          title: untitled(c) ? titleFrom(text || pages[0]?.title || "New chat") : c.title,
+          title: untitled(c) ? titleFrom(text || pages[0]?.title || (images.length ? "Image" : "New chat")) : c.title,
           messages: [...c.messages, message],
         }));
         saved(qc, chat);

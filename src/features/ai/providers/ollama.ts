@@ -171,7 +171,11 @@ export async function streamOllama(input: {
 }): Promise<TurnResult> {
   if (!input.model) return { text: "", error: "Choose an Ollama model first (Settings → AI → Local models)." };
   const parser = ollamaParser(input.on);
-  const messages = [{ role: "system", content: input.system }, ...input.messages];
+  // Ollama takes images as a list of base64 strings on the message (vision models only).
+  const messages = [
+    { role: "system", content: input.system },
+    ...input.messages.map((m) => (m.images?.length ? { role: m.role, content: m.content, images: m.images.map((i) => i.data) } : { role: m.role, content: m.content })),
+  ];
   const result = (): TurnResult => ({ text: parser.state.text, thinking: parser.state.thinking, usage: parser.state.usage });
   const onLine = (line: string) => {
     try {

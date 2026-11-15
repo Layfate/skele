@@ -81,6 +81,44 @@ Claude Code, Codex or both), edit its `SKILL.md`, import a skill folder (no link
 500 files and 50 MB) or delete one. Type `/` and a skill's name in a chat to use it (Codex
 receives it as `$name`).
 
+The `/` menu shows everything Claude Code itself can run: its own skills, your skills, and the
+skills and commands of its plugins (namespaced, e.g. `/anthropic-skills:pdf`), with their
+descriptions and plugin name. Skele gets the list from Claude Code's startup report
+(`ai_claude_catalog` runs `claude -p` with its local `/context` command, which never reaches
+the model, and stops it as soon as the `init` event arrives), keeps the last answer, and adds
+descriptions from the `SKILL.md` / `commands/*.md` files on disk. `/plugins` lists the
+plugins Claude Code loaded and what each adds.
+
+## Models and effort
+
+The model menu names Claude Code's models with their versions (the `opus`, `sonnet`, `fable`
+and `haiku` aliases always point at the newest: Opus 5.5, Sonnet 5.5, Fable 5.2, Haiku 5.5),
+shows which model "Default" is (from the same startup report) and offers earlier versions
+under **More models**. Replies show the exact model that answered (Claude Code reports it)
+and the effort used.
+
+Effort has Claude Code's five levels: low, medium, high, xhigh, max. Providers that stop lower
+use their highest level: Codex `xhigh`, OpenAI API `high`; Ollama has no effort setting.
+`/model` and `/effort` without arguments open the pickers; `/effort high` sets it directly.
+
+## Images
+
+Paste an image with **Ctrl+V** or **Alt+V**, or use the image button (up to 10 per message).
+Alt+V reads the system clipboard directly (on Windows through the Win32 clipboard in
+`src-tauri/src/clipboard.rs`: a PNG, a bitmap such as a screenshot, or an image file copied in
+File Explorer), which also covers pastes the webview doesn't turn into a file. Images are
+scaled to at most 1568 px on the long side and stored on the message as base64.
+
+| Provider | How images are sent |
+|---|---|
+| Claude Code | One `--input-format stream-json` user message with image blocks |
+| Codex | Written to temporary files in Skele's data folder, passed with `--image=<file>`, removed after the run |
+| Claude API / OpenAI API | Image content blocks (`image` / `input_image`) |
+| Ollama | The message's `images` (vision models only) |
+
+Claude Code and Codex get the images of the message they answer; API and local models get the
+images of every message in the history they're sent.
+
 ## Agents (multi-agent)
 
 **Settings → AI → Agents**: assistants with their own instructions and, optionally, their
@@ -96,8 +134,8 @@ own provider and model. In a chat:
 ## Slash commands
 
 Skele answers these itself: `/usage`, `/status`, `/compact`, `/model [name]`,
-`/mode [chat|read|edit]`, `/mcp`, `/skills`, `/agents`, `/new`, `/help`. Any other `/name`
-is a skill and goes to the CLI.
+`/effort [level]`, `/mode [chat|read|edit]`, `/mcp`, `/skills`, `/plugins`, `/agents`, `/new`,
+`/help`. Any other `/name` is a skill (or plugin command) and goes to the CLI.
 
 ## Context
 
@@ -140,7 +178,9 @@ keep their own session files as they normally do.
 | | |
 |---|---|
 | `src-tauri/src/ai.rs` | Runs the CLIs: access modes, MCP/sub-agent files, Codex isolation, detection, folder checks |
-| `src-tauri/src/ai_ext.rs` | Plugins and marketplaces, the CLIs' MCP lists (masked), MCP connection test, skills |
+| `src-tauri/src/ai_ext.rs` | Plugins and marketplaces, the CLIs' MCP lists (masked), MCP connection test, skills, Claude Code's catalog |
+| `src-tauri/src/clipboard.rs` | Alt+V: the clipboard image (Windows) |
+| `src/features/ai/images.ts` | Pasted images: decoding, downscaling, clipboard |
 | `src-tauri/src/ai_ollama.rs` | Ollama status, models, streaming chat, downloads, start |
 | `src/features/ai/run.ts` | One turn: provider/agent/model, history, CLI catch-up, skills, `/compact` |
 | `src/features/ai/fallback.ts` | The local fallback |

@@ -9,6 +9,7 @@
 mod ai;
 mod ai_ext;
 mod ai_ollama;
+mod clipboard;
 mod commands;
 mod media;
 mod oauth;
@@ -105,6 +106,7 @@ pub fn run() {
             ai_ext::ai_skill_write,
             ai_ext::ai_skill_delete,
             ai_ext::ai_skill_import,
+            ai_ext::ai_claude_catalog,
             ai_ollama::ai_ollama_status,
             ai_ollama::ai_ollama_models,
             ai_ollama::ai_ollama_chat,
@@ -115,6 +117,8 @@ pub fn run() {
             media::media_session,
             media::media_control,
             media::media_artwork,
+            media::media_seek,
+            clipboard::clipboard_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Skele");

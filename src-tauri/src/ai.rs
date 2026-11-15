@@ -542,6 +542,77 @@ pub struct CliRunArgs {
     /// Claude Code sub-agents: `{ "<name>": { "description", "prompt", "model"? } }`.
     #[serde(default)]
     agents: Option<serde_json::Value>,
+    /// Images pasted into this message (base64).
+    #[serde(default)]
+    images: Vec<ImageInput>,
+}
+
+/// An image sent with a message: its type and its bytes as base64 (no `data:` prefix).
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInput {
+    media_type: String,
+    data: String,
+}
+
+const MAX_IMAGES: usize = 10;
+/// Base64 length of one image (about 7.5 MB of image data).
+const MAX_IMAGE_B64: usize = 10 * 1024 * 1024;
+
+impl ImageInput {
+    /// File extension for the image type, or an error for anything that isn't an image.
+    fn extension(&self) -> CmdResult<&'static str> {
+        match self.media_type.as_str() {
+            "image/png" => Ok("png"),
+            "image/jpeg" => Ok("jpg"),
+            "image/gif" => Ok("gif"),
+            "image/webp" => Ok("webp"),
+            other => Err(format!("Unsupported image type: {other}")),
+        }
+    }
+}
+
+pub(crate) fn validate_images(images: &[ImageInput]) -> CmdResult<()> {
+    if images.len() > MAX_IMAGES {
+        return Err(format!("Send at most {MAX_IMAGES} images at a time."));
+    }
+    for img in images {
+        img.extension()?;
+        let ok = !img.data.is_empty()
+            && img.data.len() <= MAX_IMAGE_B64
+            && img
+                .data
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=');
+        if !ok {
+            return Err("An image is too large or isn't valid.".into());
+        }
+    }
+    Ok(())
+}
+
+/// What's written to the CLI's stdin: the prompt, or (Claude Code with images) one
+/// stream-json user message holding the images and the text.
+pub(crate) fn stdin_payload(tool: Tool, a: &CliRunArgs) -> String {
+    if tool != Tool::Claude || a.images.is_empty() {
+        return a.prompt.clone();
+    }
+    let mut content: Vec<serde_json::Value> = a
+        .images
+        .iter()
+        .map(|i| {
+            serde_json::json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": i.media_type, "data": i.data },
+            })
+        })
+        .collect();
+    content.push(serde_json::json!({ "type": "text", "text": a.prompt }));
+    let line = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": content },
+    });
+    format!("{line}\n")
 }
 
 #[derive(Serialize)]
@@ -579,6 +650,8 @@ pub(crate) struct RunContext {
     pub agents_file: Option<PathBuf>,
     /// The CLI's own MCP servers: switched off (Codex) or allowed (Claude) by name.
     pub cli_servers: Vec<String>,
+    /// Codex: the message's images, written to files for `--image`.
+    pub image_files: Vec<PathBuf>,
 }
 
 fn effort_for(tool: Tool, e: Option<&str>) -> Option<&str> {
@@ -602,6 +675,7 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
     for s in &a.mcp_servers {
         s.validate()?;
     }
+    validate_images(&a.images)?;
     let mut args: Vec<String> = Vec::new();
     match tool {
         Tool::Claude => {
@@ -696,6 +770,11 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
             if a.ephemeral {
                 args.push("--no-session-persistence".into());
             }
+            if !a.images.is_empty() {
+                // Images can only be sent as a stream-json message on stdin.
+                args.push("--input-format".into());
+                args.push("stream-json".into());
+            }
         }
         Tool::Codex => {
             args.push("exec".into());
@@ -746,6 +825,10 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
             if a.ephemeral {
                 args.push("--ephemeral".into());
             }
+            for f in &ctx.image_files {
+                // `--image=<file>` (one value each) so the option can't swallow the session id.
+                args.push(format!("--image={}", f.display()));
+            }
             if let Some(s) = session {
                 args.push(s.into());
             }
@@ -757,6 +840,10 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
 
 /// Writes a private per-run file (MCP config, sub-agents) in `<data dir>/ai/runs`.
 fn write_private(dir: &Path, name: &str, contents: &str) -> CmdResult<PathBuf> {
+    write_private_bytes(dir, name, contents.as_bytes())
+}
+
+fn write_private_bytes(dir: &Path, name: &str, contents: &[u8]) -> CmdResult<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(name);
     std::fs::write(&path, contents).map_err(|e| e.to_string())?;
@@ -876,9 +963,21 @@ pub async fn ai_cli_run(
                 .and_then(|h| std::fs::read_to_string(h.join("config.toml")).ok())
                 .map(|t| codex_config_servers(&t))
                 .unwrap_or_default();
+            validate_images(&args.images)?;
+            for (i, img) in args.images.iter().enumerate() {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(img.data.as_bytes())
+                    .map_err(|_| "An image isn't valid.".to_string())?;
+                let name = format!("{}-{i}.{}", args.run_id, img.extension()?);
+                let f = write_private_bytes(&runs_dir, &name, &bytes)?;
+                cleanup.0.push(f.clone());
+                ctx.image_files.push(f);
+            }
         }
     }
     let cli_args = build_args(tool, &args, &ctx)?;
+    let payload = stdin_payload(tool, &args);
     let runs = runs.inner().clone();
 
     tauri::async_runtime::spawn_blocking(move || -> CmdResult<CliRunResult> {
@@ -895,10 +994,9 @@ pub async fn ai_cli_run(
         runs.0.lock().unwrap().insert(args.run_id.clone(), pid);
 
         let stdin = child.stdin.take();
-        let prompt = args.prompt;
         std::thread::spawn(move || {
             if let Some(mut stdin) = stdin {
-                let _ = stdin.write_all(prompt.as_bytes());
+                let _ = stdin.write_all(payload.as_bytes());
             }
         });
         let stderr = child.stderr.take();
@@ -1204,7 +1302,60 @@ mod tests {
             use_cli_extensions: false,
             allow_skills: false,
             agents: None,
+            images: vec![],
         }
+    }
+
+    fn png() -> ImageInput {
+        ImageInput {
+            media_type: "image/png".into(),
+            data: "iVBORw0KGgo=".into(),
+        }
+    }
+
+    #[test]
+    fn claude_images_go_as_stream_json() {
+        let mut a = run_args("claude", None, None);
+        a.images = vec![png()];
+        let args = build(Tool::Claude, &a);
+        assert!(pair(&args, "--input-format", "stream-json"));
+        let line: serde_json::Value =
+            serde_json::from_str(stdin_payload(Tool::Claude, &a).trim()).unwrap();
+        assert_eq!(line["type"], "user");
+        let content = line["message"]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[1]["text"], "hi");
+        // Without images the prompt is sent as plain text.
+        let plain = run_args("claude", None, None);
+        assert_eq!(stdin_payload(Tool::Claude, &plain), "hi");
+        assert!(!build(Tool::Claude, &plain).contains(&"--input-format".to_string()));
+    }
+
+    #[test]
+    fn codex_images_are_files_before_the_session() {
+        let a = run_args("codex", Some("sess-1"), None);
+        let ctx = RunContext {
+            image_files: vec![PathBuf::from("img-0.png")],
+            ..Default::default()
+        };
+        let args = build_args(Tool::Codex, &a, &ctx).unwrap();
+        let img = args.iter().position(|x| x == "--image=img-0.png").unwrap();
+        let sess = args.iter().position(|x| x == "sess-1").unwrap();
+        assert!(img < sess);
+        assert_eq!(args.last().unwrap(), "-");
+    }
+
+    #[test]
+    fn rejects_bad_images() {
+        let mut bad = png();
+        bad.media_type = "text/html".into();
+        assert!(validate_images(&[bad]).is_err());
+        let mut junk = png();
+        junk.data = "<script>".into();
+        assert!(validate_images(&[junk]).is_err());
+        assert!(validate_images(&vec![png(); 11]).is_err());
+        assert!(validate_images(&[png()]).is_ok());
     }
 
     fn build(tool: Tool, a: &CliRunArgs) -> Vec<String> {
@@ -1271,6 +1422,7 @@ mod tests {
             mcp_file: Some(PathBuf::from("m.json")),
             agents_file: Some(PathBuf::from("a.json")),
             cli_servers: vec!["blender".into()],
+            ..Default::default()
         };
         let a = build_args(Tool::Claude, &r, &ctx).unwrap();
         assert!(pair(&a, "--mcp-config", "m.json"));
@@ -1484,7 +1636,7 @@ mod tests {
             .stdin
             .take()
             .unwrap()
-            .write_all(a.prompt.as_bytes())
+            .write_all(stdin_payload(tool, &a).as_bytes())
             .unwrap();
         let out = child.wait_with_output().unwrap();
         (
@@ -1531,6 +1683,7 @@ mod tests {
             mcp_file: Some(mcp),
             agents_file: Some(agents),
             cli_servers: vec![],
+            ..Default::default()
         };
         let (out, err, code) = live(Tool::Claude, a, ctx, &folder);
         println!("{err}");
@@ -1640,5 +1793,50 @@ mod tests {
         .is_err());
         assert!(build_args(Tool::Codex, &run_args("codex", None, Some("a b")), &ctx).is_err());
         assert!(Tool::parse("bash").is_err());
+    }
+
+    /// A 16×16 solid red PNG.
+    const RED_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=";
+
+    #[test]
+    #[ignore]
+    fn live_claude_sees_an_image() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut a = run_args("claude", None, None);
+        a.prompt = "What single colour fills this image? Answer with one lowercase word.".into();
+        a.images = vec![ImageInput {
+            media_type: "image/png".into(),
+            data: RED_PNG.into(),
+        }];
+        let (out, err, code) = live(Tool::Claude, a, RunContext::default(), folder.path());
+        println!("{err}");
+        assert_eq!(code, Some(0));
+        assert!(out.to_lowercase().contains("red"), "{out}");
+    }
+
+    #[test]
+    #[ignore]
+    fn live_codex_sees_an_image() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("red.png");
+        use base64::Engine;
+        std::fs::write(
+            &file,
+            base64::engine::general_purpose::STANDARD
+                .decode(RED_PNG)
+                .unwrap(),
+        )
+        .unwrap();
+        let mut a = run_args("codex", None, None);
+        a.prompt =
+            "What single colour fills the attached image? Answer with one lowercase word.".into();
+        let ctx = RunContext {
+            image_files: vec![file],
+            ..Default::default()
+        };
+        let (out, err, code) = live(Tool::Codex, a, ctx, folder.path());
+        println!("{err}");
+        assert_eq!(code, Some(0));
+        assert!(out.to_lowercase().contains("red"), "{out}");
     }
 }

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { appMeta } from "@/data/registry";
 import { spotify, SpotifyError } from "./api";
 import { getClientId, isConnected } from "./auth";
-import { localArtwork, localControl, localControlSupported, localSession, type LocalAction, type LocalSession } from "./local";
+import { localArtwork, localControl, localControlSupported, localSeek, localSession, type LocalAction, type LocalSession } from "./local";
 
 export type PlayerDisplay = "sidebar" | "floating" | "off";
 export const spotifyKeys = {
@@ -114,6 +114,19 @@ export function useLocalArtwork(session: LocalSession | null | undefined) {
     staleTime: Infinity,
     gcTime: 60_000,
     retry: 1,
+  });
+}
+
+/** Seeks in the Spotify app on this computer. */
+export function useLocalSeek() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (positionMs: number) => localSeek(positionMs),
+    onSuccess: () => {
+      setTimeout(() => qc.invalidateQueries({ queryKey: spotifyKeys.local }), 300);
+      setTimeout(() => qc.invalidateQueries({ queryKey: spotifyKeys.local }), 1200);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't move in the song"),
   });
 }
 

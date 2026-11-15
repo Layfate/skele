@@ -6,7 +6,31 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-14
+## [0.2.1] - 2026-11-15
+
+### Added
+
+- **Images in AI chats**: paste with **Ctrl+V** or **Alt+V** (as in Claude Code), or use the
+  image button. Screenshots, copied images and image files copied in File Explorer all work.
+  Images are scaled down to what models look at (1568 px) and sent to Claude Code, Codex, the
+  Claude and OpenAI APIs and Ollama vision models; click one in the chat to see it full size.
+- **Effort from low to max**: the effort picker is now a Faster ↔ Smarter scale with Claude
+  Code's five levels (low, medium, high, xhigh, max), adjustable with ← →. Providers that stop
+  lower use their highest level (Codex xhigh, OpenAI high). `/effort [level]` sets it.
+- **Model versions**: the model menu names each model with its version (Opus 5.5, Sonnet 5.5,
+  Fable 5.2, Haiku 5.5), shows which model Claude Code's "Default" is, and has **More models**
+  for earlier versions. Each reply shows the exact model and effort it used, and the model is
+  told which model and effort it's running with. `/model` and `/effort` open the pickers.
+- **Plugins and skills in `/`**: the `/` menu lists everything Claude Code can run, including
+  plugin skills and plugin commands (e.g. `/anthropic-skills:voxel-pet-design-prompts`), with
+  descriptions and the plugin's name; type part of a name to find it. Skele reads the list
+  from Claude Code's own startup report, using its local `/context` command, so no usage is
+  spent. New `/plugins` command lists loaded plugins and what they add.
+- **Spotify timeline**: click or drag the song's progress bar to jump to any point (a bubble
+  shows the time), or use ← → (5 s, Shift for 15 s), Home and End. Works in the Spotify app on
+  Windows (Free accounts) and with Premium.
+
+
 
 ### Added
 

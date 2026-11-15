@@ -1,7 +1,41 @@
 // AI workspace: providers, models, access modes, agents, MCP servers and the stored chat shape.
 
 export type ProviderId = "claude-cli" | "codex-cli" | "ollama" | "anthropic" | "openai";
-export type Effort = "low" | "medium" | "high";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/** Effort levels, from fastest to smartest (as in Claude Code's /effort). */
+export const EFFORTS: { id: Effort; label: string; hint: string }[] = [
+  { id: "low", label: "low", hint: "Fastest replies, least reasoning" },
+  { id: "medium", label: "medium", hint: "Good for most questions" },
+  { id: "high", label: "high", hint: "Thinks longer on hard problems" },
+  { id: "xhigh", label: "xhigh", hint: "Deeper reasoning for complex work" },
+  { id: "max", label: "max", hint: "Thinks as long as it needs; slowest and most usage" },
+];
+
+/** The highest effort a provider accepts (Ollama has no effort setting). */
+export function maxEffort(provider: ProviderId): Effort | null {
+  switch (provider) {
+    case "claude-cli":
+    case "anthropic":
+      return "max";
+    case "codex-cli":
+      return "xhigh";
+    case "openai":
+      return "high";
+    case "ollama":
+      return null;
+  }
+}
+
+/** The effort actually sent: the chosen one, lowered to what the provider supports. */
+export function effortFor(provider: ProviderId, effort: Effort): Effort {
+  const max = maxEffort(provider);
+  if (!max) return effort;
+  const ids = EFFORTS.map((e) => e.id);
+  return ids.indexOf(effort) > ids.indexOf(max) ? max : effort;
+}
+
+export const isEffort = (s: string): s is Effort => EFFORTS.some((e) => e.id === s);
 
 /**
  * What a chat's AI may do on this computer (CLI providers only).
@@ -73,14 +107,48 @@ export const isCli = (p: ProviderId): p is "claude-cli" | "codex-cli" => PROVIDE
 
 export type ModelOption = { id: string; label: string; hint?: string };
 
-/** "" = the tool's own default (whatever the CLI is configured to use). */
+/** "" = the tool's own default (whatever the CLI is configured to use). The aliases always
+ * point at the newest version of each model; the labels say which one that is. */
 export const CLAUDE_CLI_MODELS: ModelOption[] = [
   { id: "", label: "Default", hint: "Claude Code's configured model" },
-  { id: "fable", label: "Fable", hint: "Most capable" },
-  { id: "opus", label: "Opus", hint: "Capable and quick" },
-  { id: "sonnet", label: "Sonnet", hint: "Fast and capable" },
-  { id: "haiku", label: "Haiku", hint: "Fastest" },
+  { id: "opus", label: "Opus 5.5", hint: "For complex work and everyday tasks" },
+  { id: "sonnet", label: "Sonnet 5.5", hint: "Most efficient for simpler tasks" },
+  { id: "fable", label: "Fable 5.2", hint: "For your toughest challenges" },
+  { id: "haiku", label: "Haiku 5.5", hint: "Fastest for quick answers" },
 ];
+
+/** Earlier versions Claude Code can still use (its "More models"). */
+export const CLAUDE_MORE_MODELS: ModelOption[] = [
+  { id: "claude-fable-5-1", label: "Fable 5.1" },
+  { id: "claude-fable-5", label: "Fable 5" },
+  { id: "claude-opus-5", label: "Opus 5" },
+  { id: "claude-opus-4-8", label: "Opus 4.8" },
+  { id: "claude-sonnet-5", label: "Sonnet 5" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5" },
+];
+
+/** What each Claude Code alias currently resolves to. */
+export const CLAUDE_ALIASES: Record<string, string> = {
+  opus: "claude-opus-5-5",
+  sonnet: "claude-sonnet-5-5",
+  fable: "claude-fable-5-2",
+  haiku: "claude-haiku-5-5",
+};
+
+/**
+ * A readable name for a model id: "claude-opus-5-5" → "Opus 5.5", "claude-fable-5-2[1m]" →
+ * "Fable 5.2 (1M)", "opus" → "Opus 5.5". Anything else is returned as it is.
+ */
+export function prettyModel(id: string): string {
+  const raw = id.trim();
+  if (!raw) return "";
+  const alias = CLAUDE_ALIASES[raw.toLowerCase()];
+  if (alias) return prettyModel(alias);
+  const m = /^(?:anthropic\.)?claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(raw);
+  if (!m) return raw;
+  const family = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  return `${family} ${m[2]}${m[3] ? `.${m[3]}` : ""}${m[4] ? " (1M)" : ""}`;
+}
 
 export const CODEX_DEFAULT_MODEL: ModelOption = { id: "", label: "Default", hint: "Codex's configured model" };
 
@@ -101,6 +169,19 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
 
 export type ContextPage = { id: string; title: string; icon?: string | null };
 
+/** An image sent with a message (pasted or attached), downscaled and stored as base64. */
+export type ChatImage = {
+  id: string;
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  /** Base64, no `data:` prefix. */
+  data: string;
+  width: number;
+  height: number;
+  name?: string;
+};
+
+export const MAX_CHAT_IMAGES = 10;
+
 /** Tokens and cost of one reply, as the provider reported them. */
 export type TurnUsage = {
   inputTokens: number;
@@ -120,6 +201,8 @@ export type ChatMessage = {
   pages?: ContextPage[];
   /** Page text sent to the model with this message (not shown). */
   context?: string;
+  /** Images sent with this message (user messages). */
+  images?: ChatImage[];
   /** Summarised reasoning, when the provider returns it. */
   thinking?: string;
   /** Steps a tool-using agent took (files read, searches, MCP tools), shown collapsed. */
@@ -128,6 +211,10 @@ export type ChatMessage = {
   denied?: string[];
   provider?: ProviderId;
   model?: string;
+  /** The exact model that answered, when the provider reported it (e.g. "claude-opus-5-5"). */
+  modelId?: string;
+  /** Effort the reply was made with. */
+  effort?: Effort;
   /** The agent that wrote this reply (multi-agent chats). */
   agentId?: string;
   agentName?: string;

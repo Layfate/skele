@@ -17,6 +17,8 @@ export type LocalSession = {
   canPrevious: boolean;
   canNext: boolean;
   canPlayPause: boolean;
+  /** Spotify accepts a new position (seeking). */
+  canSeek: boolean;
 };
 
 export type LocalAction = "play" | "pause" | "toggle" | "next" | "previous";
@@ -36,6 +38,13 @@ export async function localControl(action: LocalAction) {
   const { invoke } = await import("@tauri-apps/api/core");
   const ok = await invoke<boolean>("media_control", { action });
   if (!ok) throw new Error("Spotify didn't respond. Is it open on this computer?");
+}
+
+/** Jumps to `positionMs` in the current track. */
+export async function localSeek(positionMs: number) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const ok = await invoke<boolean>("media_seek", { positionMs: Math.max(0, Math.round(positionMs)) });
+  if (!ok) throw new Error("Spotify didn't move to that position.");
 }
 
 /** Cover art of the current track as a data: URL, or null when Spotify doesn't provide one. */

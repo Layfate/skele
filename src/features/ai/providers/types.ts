@@ -1,6 +1,8 @@
 import type { TurnUsage } from "../types";
 
-export type TurnMessage = { role: "user" | "assistant"; content: string };
+export type TurnImage = { mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp"; data: string };
+
+export type TurnMessage = { role: "user" | "assistant"; content: string; images?: TurnImage[] };
 
 /** Each callback receives the full text so far (not a delta). */
 export type TurnHandlers = {
@@ -20,6 +22,8 @@ export type TurnResult = {
   stopped?: boolean;
   error?: string;
   usage?: TurnUsage;
+  /** The exact model that answered, if the provider said (Claude Code's init event). */
+  modelId?: string;
   /** Claude Code's latest plan-limit reading (rate_limit_event), if it sent one. */
   rateLimit?: Record<string, unknown>;
 };

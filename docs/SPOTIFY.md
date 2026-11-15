@@ -31,6 +31,10 @@ Scopes requested: `user-read-playback-state`, `user-modify-playback-state`,
   played, and a device picker
 - Play/pause, next/previous, seek, volume and switching devices. These **need Spotify Premium**,
   which is a Spotify rule. Free accounts can see what's playing.
+- **Seeking**: click or drag the progress bar (a bubble shows the time under the pointer), or
+  focus it and use ← → (5 s; Shift for 15 s), Home and End.
+- **Free accounts on Windows** (desktop app): play, pause, skip and seek in the Spotify app on
+  this computer through Windows' media controls, no Premium or connection needed.
 - Spotify must be open on some device (phone, desktop or web player). Skele tells you when no
   device is active.
 

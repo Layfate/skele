@@ -51,8 +51,9 @@ import {
   useDeleteChat,
   useLimit,
   useMcpServers,
+  useClaudeCatalog,
   useRuns,
-  useSkills,
+  useSkillEntries,
   useUpdateAiSettings,
   useUpdateChat,
   type LiveRun,
@@ -60,7 +61,7 @@ import {
 import { defaultProvider, providerAvailable } from "../run";
 import { parseCommand } from "../commands";
 import { chatTokens, contextBudget } from "../context";
-import { DEFAULT_MODEL, isCli, PROVIDERS, type AiSettings, type ChatSummary, type Effort, type ProviderId } from "../types";
+import { DEFAULT_MODEL, isCli, PROVIDERS, type AiSettings, type ChatImage, type ChatSummary, type Effort, type ProviderId } from "../types";
 import { AccessMenu, AgentMenu, type Access } from "./chat-controls";
 import { Composer, type ComposerHandle } from "./composer";
 import { AssistantMessage, UserMessage } from "./messages";
@@ -175,7 +176,11 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
   const running = !!live;
   const usable = !!provider && providerAvailable(provider, settings);
   const cli = !!provider && isCli(provider) && desktop;
-  const skills = useSkills(cli);
+  const skills = useSkillEntries(provider, settings.claudePath);
+  const catalog = useClaudeCatalog(desktop && provider === "claude-cli", settings.claudePath);
+  // /model and /effort without arguments open these, like Claude Code's pickers.
+  const [modelOpen, setModelOpen] = useState(false);
+  const [effortOpen, setEffortOpen] = useState(false);
 
   const choose = (p: ProviderId, m: string) => {
     if (p === "openai") updateSettings.mutate({ openaiModel: m });
@@ -197,15 +202,20 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
     else setDraft({ agentId: id });
   };
 
-  const send = async (text: string, pages: { id: string; title: string; icon?: string | null }[]) => {
+  const send = async (text: string, pages: { id: string; title: string; icon?: string | null }[], images: ChatImage[] = []) => {
     if (!provider) return;
     // /usage, /status, /model … are answered by Skele; /new starts a fresh chat.
-    const command = pages.length ? null : parseCommand(text);
+    const command = pages.length || images.length ? null : parseCommand(text);
     if (command?.name === "new") {
       router.push(routes.chat());
       return;
     }
-    const run = (id: string) => (command ? actions.command(id, command.name, command.args) : actions.send(id, text, pages));
+    if (command && !command.args && (command.name === "model" || command.name === "effort")) {
+      // Let the menu open after the composer's own key handling is done.
+      setTimeout(() => (command.name === "model" ? setModelOpen(true) : setEffortOpen(true)), 0);
+      return;
+    }
+    const run = (id: string) => (command ? actions.command(id, command.name, command.args) : actions.send(id, text, pages, images));
     if (chat.data) return run(chat.data.id);
     const created = await createChat.mutateAsync({ provider, model, effort, ...access, agentId });
     router.replace(routes.chat(created.id), { scroll: false });
@@ -238,8 +248,16 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
 
   const toolbar = provider && usable && (
     <>
-      <ProviderMenu settings={settings} provider={provider} model={model} onChange={choose} />
-      <EffortMenu effort={effort} onChange={chooseEffort} />
+      <ProviderMenu
+        settings={settings}
+        provider={provider}
+        model={model}
+        onChange={choose}
+        claudeDefault={catalog.data?.model}
+        open={modelOpen}
+        onOpenChange={setModelOpen}
+      />
+      <EffortMenu provider={provider} effort={effort} onChange={chooseEffort} open={effortOpen} onOpenChange={setEffortOpen} />
       {cli && <AccessMenu provider={provider} value={access} servers={servers.data ?? []} cliExtensions={settings.useCliExtensions} onChange={changeAccess} />}
       {(agents.data?.length ?? 0) > 0 && <AgentMenu agents={agents.data!} agentId={agentId} onChange={chooseAgent} />}
     </>
@@ -262,7 +280,7 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
       onStop={() => chatId && actions.stop(chatId)}
       toolbar={toolbar}
       status={status}
-      skills={cli ? skills.data : undefined}
+      skills={cli ? skills : undefined}
       agents={agents.data}
       placeholder={messages.length ? "Reply…" : "Ask anything, or attach a page…"}
     />
@@ -324,6 +342,7 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
               <AssistantMessage
                 key={m.id}
                 message={m}
+                claudeDefault={catalog.data?.model}
                 showThinking={settings.showThinking}
                 isLast={i === lastAssistant && i === messages.length - 1 && !running}
                 onRegenerate={() => chat.data && actions.regenerate(chat.data.id)}
