@@ -25,6 +25,7 @@
 <p align="center">
   <a href="https://github.com/Layfate/skele/releases/latest"><b>Download</b></a> •
   <a href="#features"><b>Features</b></a> •
+  <a href="#screenshots"><b>Screenshots</b></a> •
   <a href="#install"><b>Install</b></a> •
   <a href="#where-your-data-lives"><b>Your data</b></a> •
   <a href="#development"><b>Development</b></a> •
@@ -39,12 +40,10 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
 (PWA) in any modern browser.
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="Skele's home screen with the sidebar, recent pages and tasks" width="860">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/page.png" alt="A note with wiki links and backlinks" width="420">
-  <img src="docs/screenshots/board.png" alt="A project's task board" width="420">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.png">
+    <img src="docs/screenshots/home.png" alt="Skele's home screen: sidebar, recently visited pages, favorites and your tasks" width="100%">
+  </picture>
 </p>
 
 ## Features
@@ -59,7 +58,7 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
 - **Offline:** everything works without a network connection
 - **AI workspace (optional):** chat with Claude, Codex or a local model (Ollama) about your
   notes. The desktop app uses your existing Claude Code / Codex sign-in and can let them read
-  or edit a folder you choose, with MCP servers, plugins, skills, @agents that answer side by
+  or edit a folder you choose, with MCP servers, plugins, skills, `@agents` that answer side by
   side, plan-limit tracking and a local fallback. Anywhere else, bring your own Anthropic or
   OpenAI API key. Nothing is sent until you send a message. See [docs/AI.md](docs/AI.md)
 - **Colour themes:** Claude, ChatGPT, VS Code, GitHub, Nord, Dracula, Catppuccin and more,
@@ -67,6 +66,29 @@ Skele runs as a **desktop app** for Windows, macOS and Linux, and as an installa
 - **Optional Spotify** playback controls (your own Spotify app, PKCE, no secrets)
 - **Desktop app:** native window, menus and file dialogs, workspaces stored as SQLite files,
   a portable mode, and optional signed in-app updates
+
+## Screenshots
+
+**Notes** with an outline, backlinks and tags beside every page
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/page-dark.png">
+  <img src="docs/screenshots/page.png" alt="The Team handbook note with the details panel showing its outline and a backlink from Meeting notes" width="100%">
+</picture>
+
+**Projects** with list, board and calendar views of their tasks
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-dark.png">
+  <img src="docs/screenshots/board.png" alt="The Website relaunch project's task board with Not started, In progress and On hold columns" width="100%">
+</picture>
+
+**Databases** with table, board, calendar, gallery and list views
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/database-dark.png">
+  <img src="docs/screenshots/database.png" alt="The Content calendar database in table view with status, date and channel columns" width="100%">
+</picture>
 
 ## Install
 
@@ -221,6 +243,7 @@ GitHub Actions (see [docs/RELEASING.md](docs/RELEASING.md)).
 | `npm run test:desktop` | End-to-end test of the built Windows app (WebView2 over CDP) |
 | `npm run desktop:dev` · `npm run desktop:build` | Tauri desktop app |
 | `npm run desktop:icons` | Regenerate every icon size from `src-tauri/app-icon.png` |
+| `npm run screenshots` | Retake the README screenshots (light and dark) from the sample workspace, after `npm run build` |
 | `npm run version:set 1.2.3` | Set the version in package.json and Cargo.toml |
 
 ### Project layout
