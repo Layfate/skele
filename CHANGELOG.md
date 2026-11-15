@@ -30,6 +30,28 @@ All notable changes are listed here. The format follows
   shows the time), or use ← → (5 s, Shift for 15 s), Home and End. Works in the Spotify app on
   Windows (Free accounts) and with Premium.
 
+### Fixed
+
+- **Connect Spotify in the desktop app** showed “Couldn't start Spotify sign-in” and never
+  opened the browser. The window wasn't allowed to open any URL (the opener permission had no
+  URL scope), and Tauri's string errors were replaced by that generic message. The failed
+  attempt also kept port 43827 busy for 5 minutes, so retries failed too. Now:
+  - the sign-in listener starts before the browser opens, so port problems are reported first;
+    if 43827 is taken or reserved, Skele uses a free port (register `http://127.0.0.1/callback`
+    without a port so Spotify accepts any port);
+  - starting again or cancelling releases the port immediately, redirects from old tabs are
+    ignored, and idle browser connections can't hold up the sign-in;
+  - if the browser doesn't open, **Copy sign-in link** lets you paste it into one;
+  - errors say what went wrong and what to do (port in use, denied access, wrong Client ID or
+    redirect URI, offline, account not added to a development-mode app);
+  - being offline no longer disconnects Spotify when the access token needs refreshing.
+- Spotify's plain-text errors are shown instead of “Spotify refused this request”, including
+  its rule that a development-mode app's owner needs Premium. The settings page shows the
+  error instead of “Checking your account…” forever, and the setup notes give Spotify's
+  current limits (owner needs Premium; up to 5 users).
+- Links to websites now open in the default browser in the desktop app. The same missing
+  permission had been blocking them silently.
+
 
 
 ### Added

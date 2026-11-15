@@ -1,7 +1,7 @@
 // Minimal Spotify Web API client (official endpoints only). Playback control requires Spotify
 // Premium; errors are classified so the UI can explain instead of showing dead buttons.
 
-import { accessToken } from "./auth";
+import { accessToken, errorText } from "./auth";
 
 const API = "https://api.spotify.com/v1";
 
@@ -19,25 +19,48 @@ export class SpotifyError extends Error {
 }
 
 export async function spotifyFetch<T>(path: string, init: RequestInit = {}, retry = true): Promise<T | null> {
-  const token = await accessToken();
+  let token: string | null;
+  try {
+    // The retry after a 401 forces a refresh.
+    token = await accessToken(!retry);
+  } catch (e) {
+    // Offline, or Spotify's sign-in service is down: still connected, just unreachable for now.
+    throw new SpotifyError("unknown", errorText(e, "Couldn't reach Spotify."));
+  }
   if (!token) throw new SpotifyError("not-connected", "Spotify isn't connected.");
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
   });
-  if (res.status === 401 && retry) {
-    await accessToken(true);
-    return spotifyFetch<T>(path, init, false);
-  }
+  if (res.status === 401 && retry) return spotifyFetch<T>(path, init, false);
   if (res.status === 204 || res.status === 202) return null;
-  const data = await res.json().catch(() => null);
+  // Some errors (development-mode access rules) come back as plain text, not JSON.
+  const text = await res.text().catch(() => "");
+  let data: { error?: { reason?: string; message?: string } } | null = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
   if (res.ok) return data as T;
-  const reason = data?.error?.reason as string | undefined;
-  const message = (data?.error?.message as string | undefined) ?? res.statusText;
+  const reason = data?.error?.reason;
+  const message = (data ? data.error?.message : text.trim().slice(0, 300)) || res.statusText;
+  if (res.status === 403 && /premium subscription required for the owner/i.test(message)) {
+    throw new SpotifyError(
+      "forbidden",
+      "Spotify requires the owner of your Spotify developer app to have Premium. Subscribe the account that created the app (or create a new app with a Premium account and use its Client ID). After upgrading, Spotify can take a few hours to allow requests again.",
+    );
+  }
   if (res.status === 429) throw new SpotifyError("rate-limited", "Spotify is busy — try again in a moment.", Number(res.headers.get("Retry-After")) || 5);
   if (reason === "PREMIUM_REQUIRED") throw new SpotifyError("premium", "Playback control needs Spotify Premium.");
   if (reason === "NO_ACTIVE_DEVICE" || (res.status === 404 && /device/i.test(message))) {
     throw new SpotifyError("no-device", "No active Spotify device. Open Spotify on a phone, computer or speaker, then try again.");
+  }
+  if (res.status === 403 && /not registered|may not be registered|developer dashboard/i.test(message)) {
+    throw new SpotifyError(
+      "forbidden",
+      "This Spotify account can't use your Spotify app yet. Add it under User Management in the Spotify developer dashboard (required while the app is in development mode).",
+    );
   }
   if (res.status === 403) throw new SpotifyError("forbidden", message || "Spotify refused this request for your account or app.");
   throw new SpotifyError("unknown", message || "Spotify request failed");

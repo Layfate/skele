@@ -9,6 +9,7 @@
     "dialog:allow-ask",
     "dialog:allow-confirm",
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "process:allow-restart",
     "updater:allow-check",
     "updater:allow-download",

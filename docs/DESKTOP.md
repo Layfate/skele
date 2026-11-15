@@ -99,8 +99,8 @@ backup → Import) in the other.
 - **Links** to websites open in the default browser.
 - **Keyboard shortcuts** use ⌘ on macOS and Ctrl elsewhere, and are customisable in Settings.
 - **Spotify:** the sign-in opens in your browser and returns to
-  `http://127.0.0.1:43827/callback`, which Skele listens on only during the sign-in. See
-  [SPOTIFY.md](SPOTIFY.md).
+  `http://127.0.0.1:<port>/callback`, which Skele listens on only during the sign-in (port
+  43827, or a free port the OS picks if 43827 is taken). See [SPOTIFY.md](SPOTIFY.md).
 
 ## Security
 

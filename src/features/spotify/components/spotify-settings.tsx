@@ -11,7 +11,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { SettingsCard } from "@/features/settings/components/settings-page";
 import { isDesktop } from "@/lib/desktop";
-import { beginConnect, cancelConnect, disconnect, originProblem, redirectUri, setClientId, SPOTIFY_SCOPES } from "../auth";
+import {
+  beginConnect,
+  cancelConnect,
+  DESKTOP_LEGACY_REDIRECT_URI,
+  disconnect,
+  errorText,
+  originProblem,
+  redirectUri,
+  setClientId,
+  SPOTIFY_SCOPES,
+  SpotifyAuthError,
+  type DesktopSignIn,
+} from "../auth";
 import { spotifyKeys, useLocalSupported, usePlayerDisplay, useSetPlayerDisplay, useSpotifyMe, useSpotifyStatus, type PlayerDisplay } from "../hooks";
 import { SpotifyLogo } from "./spotify-player";
 
@@ -24,6 +36,8 @@ export function SpotifySettings() {
   const setDisplay = useSetPlayerDisplay();
   const [clientId, setClientIdDraft] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [signIn, setSignIn] = useState<DesktopSignIn | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
   if (!status.data) return <Skeleton className="h-48" />;
   const uri = typeof window !== "undefined" ? redirectUri() : "";
   const problem = typeof window !== "undefined" ? originProblem() : null;
@@ -47,7 +61,9 @@ export function SpotifySettings() {
                       ? localSupported
                         ? "Free account — play, pause and skip work through the Spotify app on this computer; starting playlists needs Premium."
                         : "Free account — you can see what's playing and browse playlists; playback control needs Premium."
-                      : "Checking your account…"}
+                      : me.error
+                        ? errorText(me.error, "Spotify didn't return your account details.")
+                        : "Checking your account…"}
                 </p>
               </>
             ) : (
@@ -83,15 +99,21 @@ export function SpotifySettings() {
               disabled={!status.data.clientId || !!problem || connecting}
               onClick={async () => {
                 setConnecting(true);
+                setConnectError(null);
                 try {
-                  if ((await beginConnect()) === "connected") {
+                  if ((await beginConnect({ onWaiting: setSignIn })) === "connected") {
                     setConnecting(false);
+                    setSignIn(null);
                     qc.invalidateQueries({ queryKey: ["spotify"] });
                     toast.success("Spotify connected");
                   }
                 } catch (e) {
                   setConnecting(false);
-                  toast.error(e instanceof Error ? e.message : "Couldn't start Spotify sign-in");
+                  setSignIn(null);
+                  if (e instanceof SpotifyAuthError && e.code === "cancelled") return;
+                  const message = errorText(e, "Couldn't start the Spotify sign-in. Please try again.");
+                  setConnectError(message);
+                  toast.error(message);
                 }
               }}
             >
@@ -100,6 +122,36 @@ export function SpotifySettings() {
           )}
         </div>
         {problem && !status.data.connected && <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-sm">{problem}</p>}
+        {connectError && !connecting && !status.data.connected && (
+          <p role="alert" className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm">
+            {connectError}
+          </p>
+        )}
+        {connecting && signIn && (
+          <div className="mt-3 space-y-2 text-sm">
+            {!signIn.browserOpened && (
+              <p className="rounded-md bg-amber-500/10 px-3 py-2">
+                Your browser didn&apos;t open{signIn.browserError ? ` (${signIn.browserError})` : ""}. Copy the sign-in link and open it in any browser on this
+                computer.
+              </p>
+            )}
+            {signIn.portNote && <p className="rounded-md bg-amber-500/10 px-3 py-2">{signIn.portNote}</p>}
+            <p className="text-muted-foreground">
+              {signIn.browserOpened ? "Browser didn't open? " : ""}
+              <button
+                type="button"
+                className="text-foreground underline"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(signIn.url);
+                  toast.success("Sign-in link copied");
+                }}
+              >
+                Copy sign-in link
+              </button>
+              . If Spotify says “Invalid redirect URI”, add {uri} to your Spotify app, then try again.
+            </p>
+          </div>
+        )}
       </SettingsCard>
 
       {(status.data.connected || localSupported) && (
@@ -154,6 +206,12 @@ export function SpotifySettings() {
                 <Copy className="size-3.5" />
               </button>
             </span>
+            {isDesktop() && (
+              <span className="mt-1 block text-xs">
+                It has no port number on purpose: Spotify then accepts whichever local port Skele uses. {DESKTOP_LEGACY_REDIRECT_URI} also works if you
+                added it before.
+              </span>
+            )}
           </li>
           <li>Copy the app&apos;s Client ID below. No client secret is needed (Skele uses PKCE).</li>
         </ol>
@@ -189,7 +247,8 @@ export function SpotifySettings() {
         </form>
         <p className="mt-3 text-xs text-muted-foreground">
           Permissions requested: {SPOTIFY_SCOPES.join(", ")}. Skele never sees your Spotify password and doesn&apos;t download or store audio.
-          Apps in Spotify&apos;s development mode work for up to 25 users you add in the dashboard.
+          Spotify apps in development mode need the app owner to have Spotify Premium, and work for up to 5 Spotify accounts you add under User
+          Management (those accounts can be Free or Premium).
         </p>
       </SettingsCard>
     </>

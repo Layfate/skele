@@ -8,18 +8,26 @@ server. Each person uses their own Spotify app (client ID).
 
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), create an
    app, and select **Web API**.
-2. Add the **redirect URI** exactly as Skele shows it in **Settings → Integrations**. For local
-   use that's:
+2. Add the **redirect URI** exactly as Skele shows it in **Settings → Integrations**:
 
-   ```
-   http://127.0.0.1:3000/integrations/spotify/callback/
-   ```
-
-   Spotify rejects `localhost`, so open Skele at `127.0.0.1`. Hosted copies need HTTPS, for
-   example `https://notes.example.com/integrations/spotify/callback/`.
+   - **Desktop app:** `http://127.0.0.1/callback`, with no port. Spotify then accepts
+     whichever local port Skele listens on (it uses 43827, or a free port if something else
+     has 43827). A redirect URI you added earlier as `http://127.0.0.1:43827/callback` keeps
+     working as long as that port is free.
+   - **Browser, local:** `http://127.0.0.1:3000/integrations/spotify/callback/`. Spotify
+     rejects `localhost`, so open Skele at `127.0.0.1`.
+   - **Browser, hosted:** HTTPS, for example
+     `https://notes.example.com/integrations/spotify/callback/`.
 3. Copy the app's **Client ID** into Settings → Integrations, then click **Connect Spotify**.
 4. While your Spotify app is in development mode, add your Spotify account under
-   **User Management** in the dashboard.
+   **User Management** in the dashboard (up to 5 accounts).
+
+> **The app owner needs Spotify Premium.** Since March 2026 Spotify only serves development-mode
+> apps whose owner (the account that created the app in the developer dashboard) has an active
+> Premium subscription. Otherwise sign-in succeeds but every request fails with "Active premium
+> subscription required for the owner of the app", and Skele says so. The accounts that sign in
+> can be Free or Premium. After the owner upgrades, Spotify can take a few hours to allow
+> requests again. See Spotify's [quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
 Scopes requested: `user-read-playback-state`, `user-modify-playback-state`,
 `user-read-currently-playing`, `user-read-recently-played`, `playlist-read-private`,
@@ -48,7 +56,10 @@ Scopes requested: `user-read-playback-state`, `user-modify-playback-state`,
 
 ## Limitations
 
-- The desktop app can't complete the Spotify sign-in yet, because its window origin isn't an
-  HTTPS or loopback address Spotify accepts. Use Skele in a browser to connect.
-- Not yet verified against a live Spotify account. The PKCE flow, token refresh and error
+- The desktop app signs in through your default browser: Skele listens on `127.0.0.1` only
+  until the redirect arrives (or 5 minutes pass, or you click Cancel), then finishes the PKCE
+  exchange itself. If the browser doesn't open, **Copy sign-in link** and paste it into any
+  browser on the same computer.
+- The desktop sign-in was verified with a live Spotify account on Windows (November 2026).
+  Playback control hasn't been verified live yet. The PKCE flow, token refresh and error
   handling are covered by unit tests with mocked responses (`tests/unit/spotify.test.ts`).

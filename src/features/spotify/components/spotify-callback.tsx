@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/logo";
-import { completeConnect } from "../auth";
+import { completeConnect, errorText } from "../auth";
 
 /** Spotify redirects here after the user approves (or denies) access. */
 export function SpotifyCallback() {
@@ -19,7 +19,7 @@ export function SpotifyCallback() {
     started.current = true;
     completeConnect(window.location.search)
       .then((next) => router.replace(next))
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Couldn't connect Spotify"));
+      .catch((e: unknown) => setError(errorText(e, "Couldn't connect Spotify. Please try again from Settings → Integrations.")));
   }, [router]);
 
   return (

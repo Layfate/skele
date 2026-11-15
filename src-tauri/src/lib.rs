@@ -88,6 +88,7 @@ pub fn run() {
             commands::save_file,
             commands::app_info,
             commands::open_data_dir,
+            oauth::oauth_start,
             oauth::oauth_wait,
             oauth::oauth_cancel,
             ai::ai_cli_run,
