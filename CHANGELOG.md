@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-17
+
 ### Added
 
 - **Windows ARM64 and Linux ARM64** builds: an installer and portable zip for ARM PCs
