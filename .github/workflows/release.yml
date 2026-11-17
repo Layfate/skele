@@ -77,7 +77,8 @@ jobs:
           node scripts/assemble-release.mjs \
             --in artifacts --out release \
             --tag "${{ github.ref_name }}" --repo "${{ github.repository }}" \
-            --required windows-x64,macos-arm64,macos-x64,macos-universal,linux-x64
+            --required windows-x64,macos-arm64,macos-x64,macos-universal,linux-x64 \
+            --optional windows-arm64,linux-arm64
           ls -la release
           cat release/release-notes.md
 

@@ -50,6 +50,17 @@ jobs:
             bundles: nsis,msi
             native: true
             optional: false
+          - name: windows-arm64
+            # Built and launch-tested on GitHub's native Windows 11 ARM64 runner. WiX (MSI)
+            # can't target ARM64, so it ships as the NSIS installer and the portable zip.
+            runner: windows-11-arm
+            platform: windows
+            arch: arm64
+            file_arch: arm64
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
+            native: true
+            optional: true
           - name: macos-arm64
             # Cross-compiled on Intel: GitHub's Apple Silicon runners are often out of capacity.
             # The app can't be launched here; the smoke test checks it's arm64 and signed.
@@ -92,6 +103,17 @@ jobs:
             bundles: appimage,deb,rpm
             native: true
             optional: false
+          - name: linux-arm64
+            # Native ARM64 runner on the same Ubuntu release, so the glibc 2.35 / WebKitGTK 4.1
+            # baseline matches linux-x64 (Raspberry Pi OS 12+, Ubuntu 22.04+ on ARM, …).
+            runner: ubuntu-22.04-arm
+            platform: linux
+            arch: arm64
+            file_arch: arm64
+            target: aarch64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+            native: true
+            optional: true
 
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +137,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb file
+
+      # ring (TLS for the updater and MCP over HTTP) needs clang to build for Windows ARM64.
+      - name: Clang (Windows ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Command clang -ErrorAction SilentlyContinue) { clang --version; exit 0 }
+          $vs = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022\*\VC\Tools\Llvm\ARM64\bin\clang.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($vs) { $dir = $vs.DirectoryName } else {
+            $installer = Join-Path $env:RUNNER_TEMP "llvm.exe"
+            Invoke-WebRequest "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-woa64.exe" -OutFile $installer
+            Start-Process $installer -ArgumentList "/S" -Wait
+            $dir = "${env:ProgramFiles}\LLVM\bin"
+          }
+          $dir >> $env:GITHUB_PATH
+          & "$dir\clang.exe" --version
 
       - run: npm ci
 
@@ -183,7 +222,19 @@ jobs:
           NEXT_PUBLIC_SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
           # No FUSE on the runners; linuxdeploy (AppImage) extracts itself instead.
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json
+        run: |
+          build() { npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json; }
+          if [ "${{ matrix.platform }}" != "macos" ]; then build; exit; fi
+          # On GitHub's macOS runners the DMG step sometimes fails with "hdiutil: couldn't
+          # eject disk - Resource busy" (a runner issue, not ours). Detach leftovers and retry;
+          # the compiled app is cached, so a retry only bundles again.
+          for attempt in 1 2 3; do
+            build && exit 0
+            [ "$attempt" = 3 ] && exit 1
+            echo "::warning::Bundling failed (attempt $attempt); detaching disk images and retrying."
+            hdiutil info | awk '/^\/dev\/disk/ {print $1}' | sort -u | xargs -n1 hdiutil detach -force 2>/dev/null || true
+            sleep 15
+          done
 
       - name: Collect and verify artifacts
         shell: bash
