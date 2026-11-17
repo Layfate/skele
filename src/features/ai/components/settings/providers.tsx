@@ -104,6 +104,14 @@ export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
           })}
         </div>
       </SettingsCard>
+      <SettingsCard title="Your workspace">
+        <Toggle
+          label="Let the AI see this workspace"
+          hint="The AI knows the titles of your pages and databases, and pages you name in a message are attached to it automatically. The Claude API, OpenAI API and OpenRouter can also search and read your pages and databases themselves. Pages are only sent with a message, to the provider that answers it."
+          checked={s.workspaceAccess}
+          onChange={(workspaceAccess) => update.mutate({ workspaceAccess })}
+        />
+      </SettingsCard>
       <SettingsCard title="When a provider can't answer">
         <div className="space-y-4">
           <Toggle
@@ -177,7 +185,8 @@ export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
       <SettingsCard title="Privacy">
         <p className="text-sm text-muted-foreground">
           Chats are saved on this device and aren&apos;t part of workspace backups. Your messages, and the text of pages you attach, are sent to the
-          provider you choose (Anthropic, OpenAI or OpenRouter, or your own Ollama server) to get a reply. Nothing is sent until you send a message. Skele never
+          provider you choose (Anthropic, OpenAI or OpenRouter, or your own Ollama server) to get a reply, along with your page titles and the
+          pages a message names (unless you turn that off under Your workspace). Nothing is sent until you send a message. Skele never
           reads the CLIs&apos; passwords or tokens: they sign in on their own.
         </p>
       </SettingsCard>

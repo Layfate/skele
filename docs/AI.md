@@ -59,6 +59,22 @@ The CLIs are started only by `src-tauri/src/ai.rs`, which builds every argument 
 values (model names, session ids, server names, TOML values for Codex). The page can't run an
 arbitrary command.
 
+## Your workspace
+
+With **Settings → AI → Providers → Let the AI see this workspace** on (the default):
+
+- Every provider is told the titles of the workspace's pages and databases (most recently
+  edited first, up to 250), so it knows what the user is referring to.
+- Pages and databases a message names are attached to it automatically, like the Pages
+  button: `[[Title]]` links, and titles that appear in the text as whole words (at least 4
+  characters, not generic words like "Notes"; longer titles win; at most 5). They show with a
+  dashed outline on the message.
+- The Claude API, OpenAI API and OpenRouter also get `search_workspace`, `list_pages` and
+  `read_page` tools (`src/features/ai/workspace.ts`), so they can look things up themselves.
+
+Pages go to the model as Markdown (without the embedded original that exports carry);
+databases as a table of their rows (up to 300). Nothing is sent until a message is.
+
 ## MCP servers
 
 **Settings → AI → MCP servers** manages servers Skele hands to Claude Code and Codex:
@@ -213,6 +229,7 @@ keep their own session files as they normally do.
 | `src-tauri/src/ai_ext.rs` | Plugins and marketplaces, the CLIs' MCP lists (masked), MCP connection test, skills, Claude Code's catalog |
 | `src-tauri/src/ai_tools.rs` | File tools and MCP sessions for API models |
 | `src/features/ai/tools.ts` | The tools an API model gets per chat, argument checks |
+| `src/features/ai/workspace.ts` | Workspace index, pages named in a message, pages and databases as text, workspace tools |
 | `src-tauri/src/clipboard.rs` | Alt+V: the clipboard image (Windows) |
 | `src/features/ai/images.ts` | Pasted images: decoding, downscaling, clipboard |
 | `src-tauri/src/ai_ollama.rs` | Ollama status, models, streaming chat, downloads, start |

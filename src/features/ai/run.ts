@@ -7,6 +7,7 @@ import { claudeSubagents } from "./agents";
 import { buildHistory, compactPrompt, contextBudget, historyStart, messageText, summaryBlock, transcript, turnImages } from "./context";
 import { toSpec } from "./extensions";
 import { apiTooling, type ApiTooling } from "./tools";
+import { workspaceIndex } from "./workspace";
 import { streamAnthropic } from "./providers/anthropic";
 import { runCli } from "./providers/cli";
 import { streamOllama } from "./providers/ollama";
@@ -29,7 +30,20 @@ export function skillInvocation(text: string): string | null {
 export function systemPrompt(
   settings: AiSettings,
   workspaceName?: string,
-  ctx: { mode?: Chat["mode"]; folder?: string; agent?: Agent; multi?: boolean; mcp?: string[]; provider?: ProviderId; model?: string; effort?: Effort } = {},
+  ctx: {
+    mode?: Chat["mode"];
+    folder?: string;
+    agent?: Agent;
+    multi?: boolean;
+    mcp?: string[];
+    provider?: ProviderId;
+    model?: string;
+    effort?: Effort;
+    /** Titles of the workspace's pages and databases (Settings: let the AI see the workspace). */
+    workspaceIndex?: string;
+    /** The model can search and read the workspace with tools. */
+    workspaceTools?: boolean;
+  } = {},
 ) {
   const model = ctx.model ? prettyModel(ctx.model) : "";
   const parts = [
@@ -40,7 +54,14 @@ export function systemPrompt(
     "The user can paste images into a message; when they do, they're attached to it.",
     ctx.agent ? `In this conversation you are "@${ctx.agent.name}". ${ctx.agent.instructions.trim()}` : "",
     workspaceName ? `The user's current workspace is called "${workspaceName}".` : "",
-    "When the user attaches pages, their content is given inside <page> tags; use it to answer and refer to pages by title.",
+    "When the user attaches pages, their content is given inside <page> tags; use it to answer and refer to pages by title. Pages and databases the user names in a message are attached automatically.",
+    ctx.workspaceIndex
+      ? `The user's workspace has these pages and databases (most recently edited first):\n${ctx.workspaceIndex}\n${
+          ctx.workspaceTools
+            ? "When the user refers to their notes, a page or a database, use search_workspace and read_page to look it up before answering."
+            : "If the user refers to one of these that isn't attached, ask them to mention it by name or attach it with the Pages button."
+        }`
+      : "",
     ctx.mode === "read" && ctx.folder ? `You can read files in the folder ${ctx.folder} with your tools. You can't change files.` : "",
     ctx.mode === "edit" && ctx.folder
       ? `You can read and change files in the folder ${ctx.folder} with your tools. Make only the changes the user asks for, and say which files you changed.`
@@ -133,7 +154,10 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
   // CLIs and API models can use files, MCP servers and the web; local models only talk.
   const tools = cli || PROVIDERS[provider].kind === "api";
   const mcp = tools ? (input.mcp ?? []) : [];
+  const index = settings.workspaceAccess ? await workspaceIndex(chat.workspaceId).catch(() => "") : "";
   const system = systemPrompt(settings, input.workspaceName, {
+    workspaceIndex: index || undefined,
+    workspaceTools: !!index && PROVIDERS[provider].kind === "api",
     mode: tools ? chat.mode : undefined,
     folder: chat.folder,
     agent,
@@ -151,7 +175,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
     if (provider === "ollama") {
       return done(await streamOllama({ ...args, url: settings.ollamaUrl, numCtx: settings.ollamaContext }));
     }
-    const tooling = await apiTooling(chat, mcp, on.activity);
+    const tooling = PROVIDERS[provider].kind === "api" ? await apiTooling(chat, mcp, on.activity, settings.workspaceAccess) : undefined;
     return done(await streamApi(provider, settings, { ...args, tooling }));
   }
 

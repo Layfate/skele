@@ -12,6 +12,7 @@
 import { isDesktop } from "@/lib/desktop";
 import { toSpec } from "./extensions";
 import type { Chat, McpServer } from "./types";
+import { workspaceTools } from "./workspace";
 
 export type ApiTool = {
   /** Unique, [a-zA-Z0-9_-]{1,64} (the strictest provider's rule). */
@@ -136,9 +137,17 @@ async function mcpTools(servers: McpServer[], note: (line: string) => void): Pro
   );
 }
 
-/** The tools a chat's API model gets this turn, from its access mode, folder, MCP servers and web setting. */
-export async function apiTooling(chat: Pick<Chat, "mode" | "folder" | "web">, mcp: McpServer[], note: (line: string) => void): Promise<ApiTooling> {
-  const tools: ApiTool[] = [];
+/**
+ * The tools a chat's API model gets this turn: searching and reading the workspace (when the
+ * AI may see it), plus files, MCP servers and web search from the chat's access settings.
+ */
+export async function apiTooling(
+  chat: Pick<Chat, "mode" | "folder" | "web" | "workspaceId">,
+  mcp: McpServer[],
+  note: (line: string) => void,
+  workspace = false,
+): Promise<ApiTooling> {
+  const tools: ApiTool[] = workspace ? workspaceTools(chat.workspaceId) : [];
   if (isDesktop()) {
     const mode = chat.mode ?? "chat";
     if ((mode === "read" || mode === "edit") && chat.folder) tools.push(...fileTools(chat.folder, mode === "edit"));

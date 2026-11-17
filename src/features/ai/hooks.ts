@@ -4,9 +4,6 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import { toast } from "sonner";
 import { create } from "zustand";
 import { newId, now } from "@/data/common";
-import { workspaceStore } from "@/data/registry";
-import { getPage, listPages } from "@/data/repo/pages";
-import { docToMarkdown } from "@/features/import-export/markdown";
 import { errorMessage } from "@/lib/errors";
 import { isDesktop } from "@/lib/desktop";
 import * as store from "./store";
@@ -19,6 +16,7 @@ import { codexModels } from "./providers/cli";
 import { listOllamaModels } from "./providers/ollama";
 import { resolveTarget, sessionKey, summarizeChat, titleFrom } from "./run";
 import { runCommand } from "./commands";
+import { pageBlock, pageText, referencedPages } from "./workspace";
 import { isCli, type Agent, type AiSettings, type Chat, type ChatImage, type ChatMessage, type ContextPage, type ProviderId } from "./types";
 
 export const aiKeys = {
@@ -216,17 +214,13 @@ export const isRunning = (chatId: string) => controllers.has(chatId);
 
 const MAX_CONTEXT_CHARS = 600_000;
 
-/** Markdown of the attached pages, wrapped in <page> tags for the model. */
+/** The attached pages (databases as tables of their rows), wrapped in <page> tags for the model. */
 async function pagesContext(workspaceId: string, pages: ContextPage[]) {
   if (!pages.length) return "";
-  const s = workspaceStore(workspaceId);
-  const titles = new Map((await listPages(s)).pages.map((p) => [p.id, p.title || "Untitled"]));
   const parts: string[] = [];
   for (const ref of pages) {
-    const page = await getPage(s, ref.id);
-    const { markdown } = docToMarkdown(page.content.doc, { pageTitle: (id) => titles.get(id), filePath: () => undefined });
-    const title = (page.title || "Untitled").replace(/"/g, "'");
-    parts.push(`<page title="${title}">\n${markdown.trim()}\n</page>`);
+    const { title, text } = await pageText(workspaceId, ref.id);
+    parts.push(pageBlock(title, text));
   }
   const text = parts.join("\n\n");
   if (text.length > MAX_CONTEXT_CHARS) {
@@ -350,6 +344,10 @@ export function useChatActions(workspaceId: string, workspaceName?: string) {
     send: (chatId: string, text: string, pages: ContextPage[] = [], images: ChatImage[] = []) =>
       guarded(async () => {
         if (controllers.has(chatId)) return;
+        // Pages and databases the message names are attached too, unless turned off.
+        if ((await store.getAiSettings()).workspaceAccess) {
+          pages = [...pages, ...(await referencedPages(workspaceId, text, pages).catch(() => []))];
+        }
         const context = await pagesContext(workspaceId, pages);
         const message: ChatMessage = {
           id: newId(),

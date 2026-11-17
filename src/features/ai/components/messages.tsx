@@ -113,7 +113,11 @@ export function UserMessage({ message, onEdit, editable }: { message: ChatMessag
       {message.pages && (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
           {message.pages.map((p) => (
-            <span key={p.id} className="flex h-6 max-w-56 items-center gap-1.5 rounded-md border bg-card px-2 text-xs text-muted-foreground">
+            <span
+              key={p.id}
+              title={p.auto ? "Attached because the message names it" : undefined}
+              className={cn("flex h-6 max-w-56 items-center gap-1.5 rounded-md border bg-card px-2 text-xs text-muted-foreground", p.auto && "border-dashed")}
+            >
               <PageIcon icon={p.icon} className="size-3.5 text-[12px]" />
               <span className="truncate">{p.title}</span>
             </span>

@@ -177,7 +177,8 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   openrouter: "",
 };
 
-export type ContextPage = { id: string; title: string; icon?: string | null };
+/** A page sent with a message. `auto`: attached because the message names it. */
+export type ContextPage = { id: string; title: string; icon?: string | null; auto?: boolean };
 
 /** An image sent with a message (pasted or attached), downscaled and stored as base64. */
 export type ChatImage = {
@@ -349,6 +350,11 @@ export type AiSettings = {
   autoCompact: boolean;
   /** Warn before sending when a plan limit is at least this full (percent). */
   limitWarnPercent: number;
+  /**
+   * The AI knows the workspace's page titles, gets the pages a message names attached, and
+   * (API models) can search and read pages and databases itself.
+   */
+  workspaceAccess: boolean;
 };
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
@@ -373,4 +379,5 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   useCliExtensions: false,
   autoCompact: true,
   limitWarnPercent: 90,
+  workspaceAccess: true,
 };

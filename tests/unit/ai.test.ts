@@ -8,6 +8,9 @@ vi.mock("@/features/ai/providers/cli", async (orig) => ({
   ...(await orig<typeof import("@/features/ai/providers/cli")>()),
   runCli: (...args: unknown[]) => runCli(...args),
 }));
+// Replies here don't read a workspace (that would open the storage engine before the
+// storage tests below choose the browser one).
+vi.mock("@/features/ai/workspace", () => ({ workspaceIndex: async () => "", workspaceTools: () => [], referencedPages: async () => [] }));
 // CLI providers need the desktop app; storage tests use the browser (IndexedDB) engine.
 const env = vi.hoisted(() => ({ desktop: true }));
 vi.mock("@/lib/desktop", () => ({ isDesktop: () => env.desktop }));

@@ -8,6 +8,13 @@ All notable changes are listed here. The format follows
 
 ### Added
 
+- **The AI knows your workspace**: every AI (Claude Code, Codex, the APIs, OpenRouter and
+  local models) is told the titles of your pages and databases, and pages or databases you
+  name in a message ("what's left on my Reading list?", or `[[Reading list]]`) are attached
+  to it automatically (shown with a dashed outline). The Claude API, OpenAI API and
+  OpenRouter can also search your workspace and read any page or database themselves.
+  Databases are sent as a table of their rows. Turn it off under Settings → AI → Providers →
+  Your workspace.
 - **OpenRouter**: one API key for hundreds of models (Claude, GPT, Gemini, Llama, DeepSeek,
   Qwen and more, including free ones). Add the key under **Settings → AI → Providers**, then
   pick a model from the searchable list (prices, context window and image support shown, with
@@ -33,6 +40,9 @@ All notable changes are listed here. The format follows
 
 ### Fixed
 
+- Pages attached to an AI message no longer carry Skele's embedded copy of the document (a
+  long compressed blob meant for re-importing Markdown exports), and an attached database
+  now sends its rows instead of an empty page.
 - **Settings → AI → Plugins** showed "Couldn't read the plugin list." With a few marketplaces
   added, `claude plugin list --json --available` prints more than 2 MB, and Skele kept only the
   last 2 MB of it, cutting off the start of the JSON. Listings are now read whole and cut down
