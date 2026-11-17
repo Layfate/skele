@@ -8,6 +8,9 @@ All notable changes are listed here. The format follows
 
 ### Added
 
+- **Windows ARM64 and Linux ARM64** builds: an installer and portable zip for ARM PCs
+  running Windows 11, and AppImage, deb, rpm and tar.gz for ARM64 Linux (Raspberry Pi 4/5 with
+  a 64-bit OS and others). Both are built and launch-tested on native ARM64 machines.
 - **The AI knows your workspace**: every AI (Claude Code, Codex, the APIs, OpenRouter and
   local models) is told the titles of your pages and databases, and pages or databases you
   name in a message ("what's left on my Reading list?", or `[[Reading list]]`) are attached
