@@ -32,8 +32,18 @@ pub struct Captured {
     timed_out: bool,
 }
 
+/// How much of a command's output is kept (the end of it, where errors are).
+const MAX_STDOUT: usize = 2_000_000;
+/// Listings are JSON that has to be read whole: `claude plugin list --available` alone is
+/// over 2 MB with a few marketplaces added, and cutting its start made the list unreadable.
+const MAX_LIST_STDOUT: usize = 64_000_000;
+
 /// Runs a command to completion (or until `timeout`), capturing its output.
-fn capture(mut cmd: Command, timeout: Duration) -> CmdResult<Captured> {
+fn capture(cmd: Command, timeout: Duration) -> CmdResult<Captured> {
+    capture_with(cmd, timeout, MAX_STDOUT)
+}
+
+fn capture_with(mut cmd: Command, timeout: Duration, max_stdout: usize) -> CmdResult<Captured> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -79,7 +89,7 @@ fn capture(mut cmd: Command, timeout: Duration) -> CmdResult<Captured> {
     Ok(Captured {
         ok: status.is_some_and(|s| s.success()),
         code,
-        stdout: tail(out.join().unwrap_or_default(), 2_000_000),
+        stdout: tail(out.join().unwrap_or_default(), max_stdout),
         stderr: tail(strip_ansi(&err.join().unwrap_or_default()), 8000),
         timed_out,
     })
@@ -255,20 +265,82 @@ pub async fn ai_cli_manage(
     let exe = find_tool(tool, path.as_deref())
         .ok_or_else(|| format!("Couldn't find the `{}` command.", tool.name()))?;
     // Installs fetch from the network (Git clones); listing is quick.
-    let timeout = match action {
-        ManageAction::PluginList | ManageAction::MarketplaceList => Duration::from_secs(60),
-        _ => Duration::from_secs(300),
-    };
+    let list = matches!(
+        action,
+        ManageAction::PluginList | ManageAction::MarketplaceList
+    );
+    let timeout = Duration::from_secs(if list { 60 } else { 300 });
+    let plugin_list = matches!(action, ManageAction::PluginList);
     tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = command(&exe);
         cmd.args(&args);
         if let Some(h) = home() {
             cmd.current_dir(h);
         }
-        capture(cmd, timeout)
+        let mut out = capture_with(
+            cmd,
+            timeout,
+            if list { MAX_LIST_STDOUT } else { MAX_STDOUT },
+        )?;
+        if plugin_list && out.ok {
+            if let Some(slim) = slim_plugin_list(&out.stdout) {
+                out.stdout = slim;
+            }
+        }
+        Ok(out)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The JSON in a CLI's output (some versions print a notice before it).
+fn json_in(stdout: &str) -> Option<serde_json::Value> {
+    let t = stdout.trim();
+    let mut starts: Vec<usize> = [t.find('{'), t.find('[')].into_iter().flatten().collect();
+    starts.sort_unstable();
+    starts
+        .into_iter()
+        .find_map(|i| serde_json::from_str(&t[i..]).ok())
+}
+
+/// One plugin with only what the Plugins page shows. Claude Code names installed plugins
+/// `id` (`name@marketplace`) and available ones `pluginId` + `name`; Codex uses `pluginId`
+/// for both. Each comes out with `pluginId`, `name` and `marketplaceName`.
+fn slim_plugin(p: &serde_json::Value) -> Option<serde_json::Value> {
+    let id = p["pluginId"].as_str().or_else(|| p["id"].as_str())?;
+    let (base, market) = id.split_once('@').unwrap_or((id, ""));
+    let s = |k: &str| p[k].as_str().filter(|v| !v.is_empty());
+    let description = s("description")
+        .map(|d| d.chars().take(400).collect::<String>())
+        .map(serde_json::Value::from);
+    Some(serde_json::json!({
+        "pluginId": id,
+        "name": s("name").unwrap_or(base),
+        "description": description,
+        "marketplaceName": s("marketplaceName").unwrap_or(market),
+        "version": s("version"),
+        "enabled": p["enabled"].as_bool(),
+        "scope": s("scope"),
+    }))
+}
+
+/// `plugin list --json --available`, cut down to the fields Skele uses. Claude Code's full
+/// answer carries every plugin's source, MCP server config and install paths (megabytes
+/// with a few marketplaces added); none of that needs to cross into the page.
+pub fn slim_plugin_list(stdout: &str) -> Option<String> {
+    let v = json_in(stdout)?;
+    let list = |a: &serde_json::Value| -> Vec<serde_json::Value> {
+        a.as_array()
+            .map(|a| a.iter().filter_map(slim_plugin).collect())
+            .unwrap_or_default()
+    };
+    let (installed, available) = if v.is_array() {
+        (list(&v), Vec::new())
+    } else {
+        (list(&v["installed"]), list(&v["available"]))
+    };
+    serde_json::to_string(&serde_json::json!({ "installed": installed, "available": available }))
+        .ok()
 }
 
 // ── MCP servers the CLIs already have ───────────────────────────────────────────────────
@@ -404,7 +476,7 @@ pub struct McpTest {
     auth_required: bool,
 }
 
-fn initialize_request() -> serde_json::Value {
+pub(crate) fn initialize_request() -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -540,7 +612,7 @@ fn test_stdio(spec: &McpServerSpec) -> McpTest {
 }
 
 /// The JSON-RPC message with `id` in an MCP HTTP response (plain JSON or an SSE stream).
-fn rpc_from_body(body: &str, id: u64) -> Option<serde_json::Value> {
+pub(crate) fn rpc_from_body(body: &str, id: u64) -> Option<serde_json::Value> {
     let direct = serde_json::from_str::<serde_json::Value>(body.trim()).ok();
     if let Some(v) = direct {
         if v["id"].as_u64() == Some(id) {
@@ -1121,6 +1193,33 @@ pub async fn ai_claude_catalog(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slims_the_plugin_list_of_both_clis() {
+        // Claude Code: installed entries have `id` and no name; available have `pluginId`.
+        let claude = r#"{"installed":[{"id":"aseprite@aseprite-ai-artist","version":"0.8.3","scope":"user","enabled":false,
+            "installPath":"C:\\x","mcpServers":{"aseprite":{"command":"node"}}}],
+            "available":[{"pluginId":"remotion@remotion","name":"remotion","description":"Videos","marketplaceName":"remotion",
+            "source":{"source":"github","repo":"remotion-dev/claude-code-plugin"}}]}"#;
+        let v: serde_json::Value =
+            serde_json::from_str(&slim_plugin_list(claude).unwrap()).unwrap();
+        let i = &v["installed"][0];
+        assert_eq!(i["pluginId"], "aseprite@aseprite-ai-artist");
+        assert_eq!(i["name"], "aseprite");
+        assert_eq!(i["marketplaceName"], "aseprite-ai-artist");
+        assert_eq!(i["enabled"], false);
+        assert!(i.get("mcpServers").is_none() && i.get("installPath").is_none());
+        assert_eq!(v["available"][0]["name"], "remotion");
+        assert!(v["available"][0].get("source").is_none());
+
+        // Codex, with a notice printed before the JSON.
+        let codex = "note: something\n{\"installed\":[{\"pluginId\":\"pixelfx@pixelfx\",\"name\":\"pixelfx\",\"marketplaceName\":\"pixelfx\",\"enabled\":true}]}";
+        let v: serde_json::Value = serde_json::from_str(&slim_plugin_list(codex).unwrap()).unwrap();
+        assert_eq!(v["installed"][0]["name"], "pixelfx");
+        assert_eq!(v["available"].as_array().unwrap().len(), 0);
+
+        assert!(slim_plugin_list("not json").is_none());
+    }
 
     #[test]
     fn reads_the_claude_init_event_and_skill_descriptions() {

@@ -9,6 +9,7 @@
 mod ai;
 mod ai_ext;
 mod ai_ollama;
+mod ai_tools;
 mod clipboard;
 mod commands;
 mod media;
@@ -71,6 +72,7 @@ pub fn run() {
             app.manage(storage::Engine::new(location.root.clone()));
             app.manage(ai::AiRuns::default());
             app.manage(ai_ollama::OllamaRuns::default());
+            app.manage(ai_tools::McpPool::default());
             create_main_window(app, &location)?;
             app.manage(location);
             Ok(())
@@ -102,6 +104,9 @@ pub fn run() {
             ai_ext::ai_cli_manage,
             ai_ext::ai_cli_mcp_list,
             ai_ext::ai_mcp_test,
+            ai_tools::ai_file_tool,
+            ai_tools::ai_mcp_tools,
+            ai_tools::ai_mcp_call,
             ai_ext::ai_skills_list,
             ai_ext::ai_skill_read,
             ai_ext::ai_skill_write,
@@ -121,8 +126,16 @@ pub fn run() {
             media::media_seek,
             clipboard::clipboard_image,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Skele");
+        .build(tauri::generate_context!())
+        .expect("error while building Skele")
+        .run(|app, event| {
+            // MCP servers the API models used keep running between calls; stop them on quit.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(pool) = app.try_state::<ai_tools::McpPool>() {
+                    pool.close_all();
+                }
+            }
+        });
 }
 
 /// The main window is created here rather than from the config so a portable copy can keep

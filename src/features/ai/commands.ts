@@ -7,6 +7,7 @@ import { catalogPlugins, listSkills, refreshClaudeCatalog, savedClaudeCatalog, s
 import { claudeWindows, codexWindows, getLedger, ledgerTotals } from "./limits";
 import { cliAuth, cliStatus, codexModels, codexUsage, runCli } from "./providers/cli";
 import { listOllamaModels, ollamaStatus } from "./providers/ollama";
+import { checkOpenRouterKey, freeDailyLimit, listOpenRouterModels, openRouterCredits, priceHint } from "./providers/openrouter";
 import { noHandlers } from "./providers/types";
 import * as store from "./store";
 import { providerAvailable, SKELE_COMMANDS } from "./run";
@@ -115,8 +116,46 @@ async function codexBlock(): Promise<UsageBlock> {
 
 /** Claude Code's and Codex's plan limits (desktop app). May ask Claude Code a one-word question for a fresh reading. */
 export async function planUsage(settings: AiSettings): Promise<UsageBlock[]> {
-  if (!isDesktop()) return [];
-  return Promise.all([claudeUsage(settings), codexBlock()]);
+  const blocks = await Promise.all([
+    ...(isDesktop() ? [claudeUsage(settings), codexBlock()] : []),
+    ...(settings.openrouterKey ? [openRouterBlock(settings.openrouterKey)] : []),
+  ]);
+  return blocks;
+}
+
+/**
+ * OpenRouter: spend with the key, credits left, and how many of the day's free-model requests
+ * Skele has used (OpenRouter doesn't report that count, so it's Skele's own replies today).
+ */
+export async function openRouterBlock(apiKey: string): Promise<UsageBlock> {
+  const block: UsageBlock = { tool: "OpenRouter", windows: [] };
+  const [key, credits, ledger] = await Promise.all([
+    checkOpenRouterKey(apiKey).catch((e: unknown) => e as Error),
+    openRouterCredits(apiKey),
+    getLedger().catch(() => null),
+  ]);
+  if (key instanceof Error) return { ...block, note: key.message };
+  const today = ledger ? (ledgerTotals(ledger, 1).openrouter?.turns ?? 0) : 0;
+  const limit = freeDailyLimit(key.freeTier);
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const spent = [
+    key.usageDaily !== undefined ? `${usd(key.usageDaily)} today` : "",
+    key.usageMonthly !== undefined ? `${usd(key.usageMonthly)} this month` : "",
+    credits ? `${usd(Math.max(0, credits.total - credits.used))} credits left` : "",
+    typeof key.limitRemaining === "number" ? `${usd(key.limitRemaining)} left on this key` : "",
+  ].filter(Boolean);
+  return {
+    ...block,
+    plan: key.freeTier ? "Free tier" : "Credits",
+    windows: [{ label: `Free-model requests today (${today} of ${limit.toLocaleString()})`, usedPercent: Math.min(100, (today / limit) * 100) }],
+    asOf: new Date().toISOString(),
+    note: [
+      spent.length ? `Spent: ${spent.join(" · ")}.` : "",
+      `Free models allow ${limit.toLocaleString()} requests a day${key.freeTier ? " (1,000 after buying $10 of credits)" : ""} and 20 a minute; the count is Skele's replies today.`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
 }
 
 function usageText(blocks: UsageBlock[], extra: string[]) {
@@ -146,6 +185,13 @@ export async function modelsFor(provider: ProviderId, settings: AiSettings): Pro
       return (await listOllamaModels(settings.ollamaUrl).catch(() => [])).map((m) => ({ id: m.name, label: m.name, hint: m.details?.parameter_size }));
     case "openai":
       return settings.openaiModel ? [{ id: settings.openaiModel, label: settings.openaiModel }] : [];
+    case "openrouter": {
+      const all = await listOpenRouterModels().catch(() => []);
+      // Recently used first, then the rest (newest first).
+      const recent = settings.openrouterRecent.filter((id) => all.some((m) => m.id === id));
+      const sorted = [...recent.map((id) => all.find((m) => m.id === id)!), ...all.filter((m) => !recent.includes(m.id))];
+      return sorted.map((m) => ({ id: m.id, label: m.name, hint: priceHint(m) || undefined }));
+    }
   }
 }
 
@@ -332,9 +378,7 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
   if (name === "usage") {
     const blocks: UsageBlock[] = [];
     const extra: string[] = [];
-    if (desktop) {
-      blocks.push(...(await planUsage(settings)));
-    }
+    blocks.push(...(await planUsage(settings)));
     const week = ledgerTotals(await getLedger(), 7);
     const used = (Object.entries(week) as [ProviderId, NonNullable<(typeof week)[ProviderId]>][]).filter(([, b]) => b.turns);
     if (used.length) {
@@ -346,6 +390,7 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
     }
     if (settings.anthropicKey) extra.push("Claude API (your key) is billed per token: see console.anthropic.com → Usage.");
     if (settings.openaiKey) extra.push("OpenAI API (your key) is billed per token: see platform.openai.com/usage.");
+    if (settings.openrouterKey) extra.push("OpenRouter (your key) is billed per token from your credits: see openrouter.ai/activity.");
     if (settings.ollamaModel) extra.push("Local models (Ollama) have no usage limits.");
     if (!desktop && !extra.length) extra.push("Plan limits for Claude Code and Codex are shown in the Skele desktop app.");
     return { content: usageText(blocks, extra), card: blocks.length ? { kind: "usage", blocks, notes: extra } : undefined };
@@ -396,6 +441,9 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
   );
   lines.push(`**Claude API key:** ${settings.anthropicKey ? `set (…${settings.anthropicKey.slice(-4)})` : "not set"}`);
   lines.push(`**OpenAI API key:** ${settings.openaiKey ? `set (…${settings.openaiKey.slice(-4)})` : "not set"}`);
+  lines.push(
+    `**OpenRouter API key:** ${settings.openrouterKey ? `set (…${settings.openrouterKey.slice(-4)})${settings.openrouterModel ? ` · ${settings.openrouterModel}` : " · no model chosen"}` : "not set"}`,
+  );
   const available = (Object.keys(PROVIDERS) as ProviderId[]).filter((p) => providerAvailable(p, settings));
   lines.push(`**Available here:** ${available.map((p) => PROVIDERS[p].label).join(", ") || "none"}`);
   return { content: lines.map((l) => `- ${l}`).join("\n") };

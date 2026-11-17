@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imageSrc } from "../images";
 import { effortFor, maxEffort, prettyModel, PROVIDERS, type ChatImage, type ChatMessage, type TurnUsage, type UsageBlock } from "../types";
 import { copyText, Markdown } from "./markdown";
-import { modelLabel, ProviderIcon } from "./provider-menu";
+import { openRouterName } from "../providers/openrouter";
+import { modelLabel, ProviderIcon, useOpenRouterModels } from "./provider-menu";
 
 function Action({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
@@ -207,7 +208,12 @@ export function AssistantMessage({
   const agentName = message?.agentName ?? live?.agentName;
   const streaming = !!live;
   const local = !!(message?.local ?? live?.local);
-  const modelName = message?.modelId
+  // Re-renders with OpenRouter's readable names once its model list has loaded.
+  useOpenRouterModels(provider === "openrouter");
+  const modelName =
+    provider === "openrouter" && (message?.modelId || model)
+      ? openRouterName(message?.modelId || model, true)
+      : message?.modelId
     ? prettyModel(message.modelId)
     : model
       ? modelLabel(provider, model).replace(/^Claude /, "")

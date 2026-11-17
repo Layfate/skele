@@ -65,7 +65,7 @@ import { DEFAULT_MODEL, isCli, PROVIDERS, type AiSettings, type ChatImage, type 
 import { AccessMenu, AgentMenu, type Access } from "./chat-controls";
 import { Composer, type ComposerHandle } from "./composer";
 import { AssistantMessage, UserMessage } from "./messages";
-import { EffortMenu, ProviderIcon, ProviderMenu } from "./provider-menu";
+import { EffortMenu, pickOpenRouter, ProviderIcon, ProviderMenu, useOpenRouterModels } from "./provider-menu";
 
 export function ChatPage() {
   const { workspaceId } = useWorkspaceCtx();
@@ -164,7 +164,15 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
   const setDraft = (d: Partial<Draft>) => setDraftState((prev) => ({ ...prev, ...d }));
   const provider = chat.data?.provider ?? draft.provider ?? fallback;
   const defaultModel = (p: ProviderId | null) =>
-    p === "openai" ? settings.openaiModel : p === "ollama" ? settings.ollamaModel : p ? DEFAULT_MODEL[p] : "";
+    p === "openai"
+      ? settings.openaiModel
+      : p === "openrouter"
+        ? settings.openrouterModel
+        : p === "ollama"
+          ? settings.ollamaModel
+          : p
+            ? DEFAULT_MODEL[p]
+            : "";
   const model = chat.data?.model ?? draft.model ?? defaultModel(provider);
   const effort = chat.data?.effort ?? draft.effort ?? "medium";
   const autoServers = (servers.data ?? []).filter((s) => s.enabled && s.autoAttach).map((s) => s.id);
@@ -182,8 +190,10 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
   const [modelOpen, setModelOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
 
+  const openRouterModels = useOpenRouterModels(providerAvailable("openrouter", settings));
   const choose = (p: ProviderId, m: string) => {
     if (p === "openai") updateSettings.mutate({ openaiModel: m });
+    if (p === "openrouter" && m) updateSettings.mutate(pickOpenRouter(settings, m, openRouterModels.data));
     if (p === "ollama" && m) updateSettings.mutate({ ollamaModel: m });
     updateSettings.mutate({ defaultProvider: p });
     if (chat.data) updateChat.mutate({ id: chat.data.id, patch: { provider: p, model: m } });
@@ -258,7 +268,9 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
         onOpenChange={setModelOpen}
       />
       <EffortMenu provider={provider} effort={effort} onChange={chooseEffort} open={effortOpen} onOpenChange={setEffortOpen} />
-      {cli && <AccessMenu provider={provider} value={access} servers={servers.data ?? []} cliExtensions={settings.useCliExtensions} onChange={changeAccess} />}
+      {(cli || (!!provider && PROVIDERS[provider].kind === "api")) && (
+        <AccessMenu provider={provider!} value={access} servers={servers.data ?? []} cliExtensions={settings.useCliExtensions} local={desktop} onChange={changeAccess} />
+      )}
       {(agents.data?.length ?? 0) > 0 && <AgentMenu agents={agents.data!} agentId={agentId} onChange={chooseAgent} />}
     </>
   );
@@ -441,7 +453,7 @@ function SetupNeeded() {
         <p className="mt-1.5 text-muted-foreground">
           {desktop
             ? "Skele can use the Claude Code and Codex apps you're already signed in to, a local model with Ollama, or your own API key."
-            : "In the browser, add an Anthropic or OpenAI API key, or use a local model with Ollama. The desktop app can also use your Claude Code and Codex sign-ins."}
+            : "In the browser, add an Anthropic, OpenAI or OpenRouter API key, or use a local model with Ollama. The desktop app can also use your Claude Code and Codex sign-ins."}
         </p>
         <Button className="mt-5" asChild>
           <Link href={routes.settings("ai")}>Set up AI</Link>

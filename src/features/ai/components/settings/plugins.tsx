@@ -172,6 +172,8 @@ function ToolPlugins({ tool, path, cliExtensions }: { tool: CliTool; path: strin
         </label>
         {plugins.isPending ? (
           <StatusLine tone="busy">Loading…</StatusLine>
+        ) : plugins.isError ? (
+          <StatusLine tone="bad">Couldn&apos;t load the marketplaces&apos; plugins: {plugins.error.message}</StatusLine>
         ) : available.length === 0 ? (
           <p className="text-sm text-muted-foreground">{query ? "No matching plugins." : "Nothing else to install. Add a marketplace below."}</p>
         ) : (
@@ -196,6 +198,11 @@ function ToolPlugins({ tool, path, cliExtensions }: { tool: CliTool; path: strin
               </div>
             ))}
           </div>
+        )}
+        {available.length > 200 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Showing 200 of {available.length.toLocaleString()} plugins. Search to find the others.
+          </p>
         )}
       </SettingsCard>
 

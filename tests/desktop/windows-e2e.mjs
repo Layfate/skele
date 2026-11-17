@@ -91,7 +91,8 @@ try {
   await page.getByText("About this app").waitFor({ timeout: 15_000 });
   const about = await page.locator("dl").first().innerText();
   if (!about.includes(dataDir)) problems.push(`Settings shows the wrong data folder: ${about}`);
-  await page.getByText("Check for updates automatically").waitFor();
+  // Release builds offer automatic checks; local builds have no update source and say so.
+  await page.getByText(/Check for updates automatically|built without an update source/).first().waitFor();
   step("Settings → Desktop app shows version and data folder");
 
   await quit(app);

@@ -1,6 +1,6 @@
 // AI workspace: providers, models, access modes, agents, MCP servers and the stored chat shape.
 
-export type ProviderId = "claude-cli" | "codex-cli" | "ollama" | "anthropic" | "openai";
+export type ProviderId = "claude-cli" | "codex-cli" | "ollama" | "anthropic" | "openai" | "openrouter";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Effort levels, from fastest to smartest (as in Claude Code's /effort). */
@@ -17,6 +17,7 @@ export function maxEffort(provider: ProviderId): Effort | null {
   switch (provider) {
     case "claude-cli":
     case "anthropic":
+    case "openrouter":
       return "max";
     case "codex-cli":
       return "xhigh";
@@ -51,7 +52,7 @@ export type ProviderInfo = {
   label: string;
   /** Short name shown on messages. */
   short: string;
-  family: "claude" | "codex" | "local";
+  family: "claude" | "codex" | "local" | "router";
   /** "cli": the user's own signed-in command-line tool (desktop app only). "api": an API key. "local": a model on this computer. */
   kind: "cli" | "api" | "local";
   description: string;
@@ -97,6 +98,14 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
     family: "codex",
     kind: "api",
     description: "Calls the OpenAI API with your own API key (Codex and GPT models).",
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    short: "OpenRouter",
+    family: "router",
+    kind: "api",
+    description: "Hundreds of models (Claude, GPT, Gemini, Llama, DeepSeek, Qwen…) with one OpenRouter API key.",
   },
 };
 
@@ -165,6 +174,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   ollama: "",
   anthropic: "claude-opus-5-5",
   openai: "",
+  openrouter: "",
 };
 
 export type ContextPage = { id: string; title: string; icon?: string | null };
@@ -308,6 +318,13 @@ export type AiSettings = {
   openaiKey: string;
   /** Last OpenAI model used (the list comes from the account). */
   openaiModel: string;
+  openrouterKey: string;
+  /** Last OpenRouter model used, e.g. "anthropic/claude-sonnet-4.5". */
+  openrouterModel: string;
+  /** Its context window (tokens), from OpenRouter's model list. */
+  openrouterContext: number;
+  /** OpenRouter models picked recently, newest first (shown in the model menu). */
+  openrouterRecent: string[];
   /** Overrides for where the CLIs are installed (desktop). */
   claudePath: string;
   codexPath: string;
@@ -339,6 +356,10 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   anthropicKey: "",
   openaiKey: "",
   openaiModel: "",
+  openrouterKey: "",
+  openrouterModel: "",
+  openrouterContext: 32_000,
+  openrouterRecent: [],
   claudePath: "",
   codexPath: "",
   ollamaPath: "",

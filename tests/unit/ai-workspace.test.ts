@@ -231,6 +231,24 @@ describe("MCP servers", () => {
     expect(pendingCommand(out)).toEqual({ command: "npm i x", sha256: "ab".repeat(32) });
   });
 
+  it("reads Claude Code's installed plugins, which have an id but no name", async () => {
+    const { pluginListFrom } = await import("@/features/ai/extensions");
+    const list = pluginListFrom(
+      JSON.stringify({
+        installed: [{ id: "aseprite@aseprite-ai-artist", version: "0.8.3", enabled: false }],
+        available: [
+          { pluginId: "aseprite@aseprite-ai-artist", name: "aseprite", description: "Pixel art", marketplaceName: "aseprite-ai-artist" },
+          { pluginId: "remotion@remotion", name: "remotion", marketplaceName: "remotion" },
+        ],
+      }),
+    )!;
+    expect(list.installed).toEqual([
+      expect.objectContaining({ pluginId: "aseprite@aseprite-ai-artist", name: "aseprite", marketplaceName: "aseprite-ai-artist", description: "Pixel art", enabled: false }),
+    ]);
+    expect(list.available.map((p) => p.pluginId)).toEqual(["remotion@remotion"]);
+    expect(pluginListFrom("nope")).toBeNull();
+  });
+
   it("writes SKILL.md front matter safely", async () => {
     const { skillMarkdown } = await import("@/features/ai/extensions");
     expect(skillMarkdown("notes", "Use when: notes are shared", "# Steps")).toBe('---\nname: notes\ndescription: "Use when: notes are shared"\n---\n\n# Steps\n');

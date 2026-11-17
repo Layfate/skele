@@ -6,10 +6,12 @@ import { isDesktop } from "@/lib/desktop";
 import { claudeSubagents } from "./agents";
 import { buildHistory, compactPrompt, contextBudget, historyStart, messageText, summaryBlock, transcript, turnImages } from "./context";
 import { toSpec } from "./extensions";
+import { apiTooling, type ApiTooling } from "./tools";
 import { streamAnthropic } from "./providers/anthropic";
 import { runCli } from "./providers/cli";
 import { streamOllama } from "./providers/ollama";
 import { streamOpenAI } from "./providers/openai";
+import { openRouterModel, streamOpenRouter } from "./providers/openrouter";
 import { noHandlers, type TurnHandlers, type TurnMessage, type TurnResult } from "./providers/types";
 import { effortFor, isCli, prettyModel, PROVIDERS, type Agent, type AiSettings, type Chat, type ChatMessage, type Effort, type McpServer, type ProviderId } from "./types";
 
@@ -57,13 +59,29 @@ export function systemPrompt(
 export function providerAvailable(id: ProviderId, settings: AiSettings) {
   if (PROVIDERS[id].kind === "cli") return isDesktop();
   if (id === "ollama") return !!settings.ollamaModel;
+  if (id === "openrouter") return !!settings.openrouterKey;
   return id === "anthropic" ? !!settings.anthropicKey : !!settings.openaiKey;
 }
 
 export function defaultProvider(settings: AiSettings): ProviderId | null {
   if (settings.defaultProvider && providerAvailable(settings.defaultProvider, settings)) return settings.defaultProvider;
-  const order: ProviderId[] = ["claude-cli", "anthropic", "codex-cli", "openai", "ollama"];
+  const order: ProviderId[] = ["claude-cli", "anthropic", "codex-cli", "openai", "openrouter", "ollama"];
   return order.find((id) => providerAvailable(id, settings)) ?? null;
+}
+
+type ApiArgs = Omit<Parameters<typeof streamOpenAI>[0], "apiKey"> & { tooling?: ApiTooling };
+
+/** One reply from an API provider (Claude API, OpenAI API or OpenRouter) with its key. */
+function streamApi(provider: ProviderId, settings: AiSettings, args: ApiArgs): Promise<TurnResult> {
+  if (provider === "anthropic") return streamAnthropic({ ...args, apiKey: settings.anthropicKey });
+  if (provider === "openrouter") return streamOpenRouter({ ...args, apiKey: settings.openrouterKey });
+  return streamOpenAI({ ...args, apiKey: settings.openaiKey });
+}
+
+/** Settings with the context window of this OpenRouter model (it may differ from the last one picked). */
+async function withOpenRouterContext(settings: AiSettings, model: string): Promise<AiSettings> {
+  const meta = await openRouterModel(model).catch(() => undefined);
+  return meta ? { ...settings, openrouterContext: meta.contextLength } : settings;
 }
 
 /** Where a CLI session is remembered: per provider, and per agent. */
@@ -74,6 +92,7 @@ export function resolveTarget(chat: Chat, settings: AiSettings, agent?: Agent, o
   const provider = override?.provider ?? agent?.provider ?? chat.provider;
   let model = override ? override.model : agent?.provider ? agent.model : chat.model;
   if (!model && provider === "openai") model = settings.openaiModel;
+  if (!model && provider === "openrouter") model = settings.openrouterModel;
   if (!model && provider === "ollama") model = settings.ollamaModel;
   return { provider, model };
 }
@@ -111,9 +130,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
   const last = chat.messages[n];
   if (!last || last.role !== "user") return done({ text: "", error: "Nothing to reply to." });
   const cli = isCli(provider);
-  const mcp = cli ? (input.mcp ?? []) : [];
+  // CLIs and API models can use files, MCP servers and the web; local models only talk.
+  const tools = cli || PROVIDERS[provider].kind === "api";
+  const mcp = tools ? (input.mcp ?? []) : [];
   const system = systemPrompt(settings, input.workspaceName, {
-    mode: cli ? chat.mode : undefined,
+    mode: tools ? chat.mode : undefined,
     folder: chat.folder,
     agent,
     multi: input.multi,
@@ -124,16 +145,14 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
   });
 
   if (!cli) {
-    const history = buildHistory(chat, contextBudget(provider, settings), { provider, agentId: agent?.id });
+    const budget = contextBudget(provider, provider === "openrouter" ? await withOpenRouterContext(settings, model) : settings);
+    const history = buildHistory(chat, budget, { provider, agentId: agent?.id });
     const args = { model, effort: chat.effort, system, messages: history.messages, showThinking: settings.showThinking, signal, on };
     if (provider === "ollama") {
       return done(await streamOllama({ ...args, url: settings.ollamaUrl, numCtx: settings.ollamaContext }));
     }
-    return done(
-      provider === "anthropic"
-        ? await streamAnthropic({ ...args, apiKey: settings.anthropicKey })
-        : await streamOpenAI({ ...args, apiKey: settings.openaiKey }),
-    );
+    const tooling = await apiTooling(chat, mcp, on.activity);
+    return done(await streamApi(provider, settings, { ...args, tooling }));
   }
 
   // CLI: resume the tool's own session when it has seen everything before this message;
@@ -196,7 +215,7 @@ export async function summarizeChat(chat: Chat, settings: AiSettings, signal: Ab
   const { provider, model } = resolveTarget(chat, settings);
   const start = historyStart(chat);
   // Keep the newest part if the transcript alone wouldn't fit.
-  const maxChars = contextBudget(provider, settings) * 4 - 4000;
+  const maxChars = contextBudget(provider, provider === "openrouter" ? await withOpenRouterContext(settings, model) : settings) * 4 - 4000;
   const full = transcript(chat.messages.slice(start), label);
   const text = full.length > maxChars ? `[…]\n${full.slice(-maxChars)}` : full;
   if (!text.trim()) throw new Error("There's nothing to summarize yet.");
@@ -220,7 +239,7 @@ export async function summarizeChat(chat: Chat, settings: AiSettings, signal: Ab
     result = await streamOllama({ url: settings.ollamaUrl, model, system, messages, numCtx: settings.ollamaContext, showThinking: false, signal, on: noHandlers });
   } else {
     const args = { model, effort: "low" as const, system, messages, showThinking: false, signal, on: noHandlers };
-    result = provider === "anthropic" ? await streamAnthropic({ ...args, apiKey: settings.anthropicKey }) : await streamOpenAI({ ...args, apiKey: settings.openaiKey });
+    result = await streamApi(provider, settings, args);
   }
   if (result.stopped) throw new Error("Stopped.");
   if (result.error) throw new Error(result.error);

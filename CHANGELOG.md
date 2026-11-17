@@ -6,7 +6,45 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **OpenRouter**: one API key for hundreds of models (Claude, GPT, Gemini, Llama, DeepSeek,
+  Qwen and more, including free ones). Add the key under **Settings → AI → Providers**, then
+  pick a model from the searchable list (prices, context window and image support shown, with
+  a "Free only" filter). Recently used models are at the top of the model menu and every model
+  is under **More models**. Replies stream with reasoning (effort up to max, lowered to what
+  the model accepts), images go to models that can see them, the context budget follows the
+  model's window, and each reply records its real cost. Works in the desktop app and the
+  browser. Model names read "Nemotron 3 Ultra (free)" rather than their raw ids.
+- **Tools for API models**: the Claude API, OpenAI API and OpenRouter can now use the same
+  per-chat access settings as Claude Code and Codex (the shield button). **Read files** lets
+  them list, read and search the chat's folder; **Edit files** also lets them write and edit
+  files there (never run commands); the chat's **MCP servers** work too, kept running between
+  calls; and **Web search** uses each provider's own search. Every file path is checked to stay
+  inside the folder by the desktop app. Each step shows under the reply. Files and MCP servers
+  need the desktop app; web search works in the browser too.
+- **Autocorrect** (Settings → **Writing**): fixes common typos and missing apostrophes as you
+  type (teh → the, dont → don't, i → I), turns `->`, `--`, `...` and `(c)` into →, —, … and ©,
+  can curl quotes, and expands your own text shortcuts (omw → on my way). Backspace right
+  after a correction undoes it. Works in pages and, with typos and shortcuts only, in the AI
+  chat's message box. Never inside code.
+- **OpenRouter in usage**: `/usage` and Settings → AI → Usage show OpenRouter's spending today
+  and this month, credits left, and how many of the day's free-model requests Skele has used.
+
 ### Fixed
+
+- **Settings → AI → Plugins** showed "Couldn't read the plugin list." With a few marketplaces
+  added, `claude plugin list --json --available` prints more than 2 MB, and Skele kept only the
+  last 2 MB of it, cutting off the start of the JSON. Listings are now read whole and cut down
+  to the fields the page uses before they reach it.
+- Installed Claude Code plugins showed no name, and their Update, enable switch and Remove
+  didn't work: Claude Code lists installed plugins by `id` rather than `pluginId` and `name`.
+  They now show their name, marketplace and description.
+- The plugin browser says when it's showing only the first 200 plugins and to search for the
+  rest, and shows an error instead of "Nothing else to install" when listing fails.
+- The welcome page no longer flashes "browser" before "app" in the desktop app (a hydration
+  mismatch).
+- The Windows desktop test accepts local builds, which have no update source.
 
 - The expanded Spotify player showed two overlapping buttons in its top-right corner (the
   panel's close button over the player's own Minimise button), which also blocked clicks on

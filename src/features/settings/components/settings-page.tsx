@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSyncExternalStore, type ReactNode } from "react";
-import { Building2, DatabaseBackup, HardDrive, Keyboard, MessagesSquare, Monitor, Palette, Plug, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Building2, DatabaseBackup, HardDrive, Keyboard, MessagesSquare, Monitor, Palette, Plug, ShieldCheck, SpellCheck, type LucideIcon } from "lucide-react";
 import { AiSettingsSection } from "@/features/ai/components/ai-settings";
 import { isDesktop } from "@/lib/desktop";
 import { DesktopSection } from "@/features/desktop/desktop-section";
@@ -11,6 +11,7 @@ import { Topbar } from "@/features/shell/topbar";
 import { AppearanceSection, ShortcutsSection } from "./preference-sections";
 import { BackupSection, PrivacySection, StorageSection, WorkspaceSection } from "./workspace-sections";
 import { IntegrationsSection } from "./integrations-section";
+import { WritingSection } from "./writing-section";
 
 type Section = { id: string; label: string; icon: LucideIcon; group: string; render: () => ReactNode; desktopOnly?: boolean };
 
@@ -19,6 +20,7 @@ const ALL_SECTIONS: Section[] = [
   { id: "backup", label: "Data & backup", icon: DatabaseBackup, group: "Workspace", render: () => <BackupSection /> },
   { id: "storage", label: "Attachments", icon: HardDrive, group: "Workspace", render: () => <StorageSection /> },
   { id: "appearance", label: "Appearance", icon: Palette, group: "App", render: () => <AppearanceSection /> },
+  { id: "writing", label: "Writing", icon: SpellCheck, group: "App", render: () => <WritingSection /> },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard, group: "App", render: () => <ShortcutsSection /> },
   { id: "ai", label: "AI", icon: MessagesSquare, group: "App", render: () => <AiSettingsSection /> },
   { id: "integrations", label: "Integrations", icon: Plug, group: "App", render: () => <IntegrationsSection /> },

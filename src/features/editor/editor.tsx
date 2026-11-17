@@ -25,6 +25,9 @@ import { SlashCommand } from "./extensions/slash-command";
 import { SkeleStorageExtension, type SkeleHost, type Uploader } from "./extensions/skele-storage";
 import { LocalImage } from "./extensions/local-image";
 import { WikiLink } from "./extensions/wiki-link";
+import { Autocorrect } from "./extensions/autocorrect";
+import { usePreferences } from "@/features/settings/hooks";
+import { autocorrectOptions } from "@/lib/autocorrect";
 import "./editor.css";
 
 /** The schema needs at least one block; stored empty documents are `{ type: "doc", content: [] }`. */
@@ -84,11 +87,16 @@ export function SkeleEditor({
   const onUpdateRef = useRef(onUpdate);
   const uploadRef = useRef(upload);
   const hostRef = useRef(host);
+  const prefs = usePreferences();
+  const autocorrectRef = useRef(autocorrectOptions(prefs.data?.autocorrect));
   useEffect(() => {
     onUpdateRef.current = onUpdate;
     uploadRef.current = upload;
     hostRef.current = host;
+    autocorrectRef.current = autocorrectOptions(prefs.data?.autocorrect);
   });
+  // Read when a word ends, so changes in Settings apply without reloading the page.
+  const autocorrect = useCallback(() => autocorrectRef.current, []);
   // Plugins (e.g. the trailing paragraph) can normalise a document right after it loads.
   // Only report changes once the user has actually interacted with the editor.
   const interacted = useRef(false);
@@ -156,6 +164,9 @@ export function SkeleEditor({
         FileBlock,
         Bookmark,
         SlashCommand,
+        // Tiptap only stores this getter; it's called when a word ends, never during render.
+        // eslint-disable-next-line react-hooks/refs
+        Autocorrect.configure({ options: autocorrect }),
         // Stable wrapper so the latest upload callback is always used.
         // Tiptap only stores this callback; it runs on user uploads, never during render.
         // eslint-disable-next-line react-hooks/refs

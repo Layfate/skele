@@ -7,7 +7,9 @@ import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PageIcon } from "@/components/common";
 import { cn } from "@/lib/utils";
+import { autocorrectOptions, correction, TRIGGERS } from "@/lib/autocorrect";
 import { usePages } from "@/features/pages/hooks";
+import { usePreferences } from "@/features/settings/hooks";
 import { SLASH_COMMANDS } from "../commands";
 import type { SkillEntry } from "../extensions";
 import { imageSrc, readClipboardImage, toChatImage } from "../images";
@@ -77,6 +79,41 @@ export function Composer({
   const [reading, setReading] = useState(0);
   const area = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const prefs = usePreferences();
+  // The last autocorrection, so Backspace right after it can put back what was typed.
+  const lastFix = useRef<{ start: number; end: number; original: string } | null>(null);
+
+  /**
+   * Autocorrect in the message box: typos and the user's own shortcuts only (messages often
+   * hold code, so no symbols or curly quotes), never inside `code`. True when it handled the key.
+   * Edits go through execCommand so Ctrl+Z still undoes them.
+   */
+  const autocorrectKey = (el: HTMLTextAreaElement, key: string, modified: boolean): boolean => {
+    const last = lastFix.current;
+    if (key !== "Backspace") lastFix.current = null;
+    if (modified || el.selectionStart !== el.selectionEnd) return false;
+    const pos = el.selectionStart;
+    if (key === "Backspace") {
+      lastFix.current = null;
+      if (!last || pos !== last.end) return false;
+      el.setSelectionRange(last.start, last.end);
+      document.execCommand("insertText", false, last.original);
+      return true;
+    }
+    const ac = autocorrectOptions(prefs.data?.autocorrect);
+    if (!ac.enabled || !ac.inChat || !TRIGGERS.has(key)) return false;
+    const before = el.value.slice(0, pos);
+    const line = before.slice(before.lastIndexOf("\n") + 1);
+    // Inside a ``` block or `inline code`: leave it alone.
+    if ((before.match(/```/g)?.length ?? 0) % 2 === 1 || (line.replace(/```/g, "").match(/`/g)?.length ?? 0) % 2 === 1) return false;
+    const fix = correction(line, key, { ...ac, symbols: false, smartQuotes: false });
+    if (!fix) return false;
+    const start = pos - fix.length;
+    el.setSelectionRange(start, pos);
+    document.execCommand("insertText", false, fix.text + key);
+    lastFix.current = { start, end: start + fix.text.length + key.length, original: before.slice(start) };
+    return true;
+  };
 
   /** Adds pasted or picked images (downscaled), up to the limit. */
   const addImages = async (blobs: Blob[], names: (string | undefined)[] = []) => {
@@ -288,6 +325,7 @@ export function Composer({
       )}
       <textarea
         ref={area}
+        spellCheck
         value={text}
         rows={1}
         disabled={disabled}
@@ -318,6 +356,10 @@ export function Composer({
             // Alt+V pastes an image, as in Claude Code.
             e.preventDefault();
             void pasteFromClipboard();
+            return;
+          }
+          if (autocorrectKey(e.currentTarget, e.key, e.ctrlKey || e.metaKey || e.altKey || e.nativeEvent.isComposing)) {
+            e.preventDefault();
             return;
           }
           if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { CheckCircle2, CircleDashed, Eye, EyeOff, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, CheckCircle2, CircleDashed, Eye, EyeOff, Image as ImageIcon, Loader2, RefreshCw, Search, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,9 +14,10 @@ import { cn } from "@/lib/utils";
 import { SettingsCard } from "@/features/settings/components/settings-page";
 import { useUpdateAiSettings } from "../../hooks";
 import { cliStatus, type CliStatus } from "../../providers/cli";
+import { checkOpenRouterKey, priceHint } from "../../providers/openrouter";
 import { defaultProvider, providerAvailable } from "../../run";
 import { PROVIDERS, PROVIDER_IDS, type AiSettings } from "../../types";
-import { ProviderIcon, useOpenAIModels } from "../provider-menu";
+import { pickOpenRouter, ProviderIcon, useOpenAIModels, useOpenRouterModels } from "../provider-menu";
 
 export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
   const update = useUpdateAiSettings();
@@ -35,7 +36,7 @@ export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
       )}
       <SettingsCard
         title="API keys"
-        description="Optional. Your keys are stored only on this device, outside your workspaces, and are sent only to Anthropic or OpenAI."
+        description="Optional. Your keys are stored only on this device, outside your workspaces, and are sent only to Anthropic, OpenAI or OpenRouter."
       >
         <div className="space-y-4">
           <KeyField
@@ -55,8 +56,18 @@ export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
             onSave={(openaiKey) => update.mutate({ openaiKey })}
           />
           {s.openaiKey && <OpenAIKeyCheck settings={s} />}
+          <KeyField
+            id="openrouter-key"
+            label="OpenRouter API key"
+            hint="One key for hundreds of models: Claude, GPT, Gemini, Llama, DeepSeek, Qwen and more, including free ones. Create one at openrouter.ai/keys."
+            placeholder="sk-or-…"
+            value={s.openrouterKey}
+            onSave={(openrouterKey) => update.mutate({ openrouterKey })}
+          />
+          {s.openrouterKey && <OpenRouterKeyCheck apiKey={s.openrouterKey} />}
         </div>
       </SettingsCard>
+      {s.openrouterKey && <OpenRouterModels settings={s} />}
       <SettingsCard title="Default" description="Used for new chats. You can switch for any chat from the message box.">
         <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Default AI">
           {PROVIDER_IDS.map((id) => {
@@ -166,7 +177,7 @@ export function ProvidersTab({ settings: s }: { settings: AiSettings }) {
       <SettingsCard title="Privacy">
         <p className="text-sm text-muted-foreground">
           Chats are saved on this device and aren&apos;t part of workspace backups. Your messages, and the text of pages you attach, are sent to the
-          provider you choose (Anthropic or OpenAI, or your own Ollama server) to get a reply. Nothing is sent until you send a message. Skele never
+          provider you choose (Anthropic, OpenAI or OpenRouter, or your own Ollama server) to get a reply. Nothing is sent until you send a message. Skele never
           reads the CLIs&apos; passwords or tokens: they sign in on their own.
         </p>
       </SettingsCard>
@@ -287,6 +298,111 @@ function OpenAIKeyCheck({ settings }: { settings: AiSettings }) {
     <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <CheckCircle2 className="size-3.5 text-green-600" /> OpenAI key works · {models.data.length} chat models available
     </p>
+  );
+}
+
+function OpenRouterKeyCheck({ apiKey }: { apiKey: string }) {
+  const info = useQuery({ queryKey: ["openrouter-key", apiKey.slice(-6)], queryFn: () => checkOpenRouterKey(apiKey), staleTime: 5 * 60_000, retry: false });
+  if (info.isPending)
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 animate-spin" /> Checking the OpenRouter key…
+      </p>
+    );
+  if (info.isError)
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-destructive">
+        <XCircle className="size-3.5" /> {info.error.message}
+      </p>
+    );
+  const d = info.data;
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <CheckCircle2 className="size-3.5 text-green-600" /> OpenRouter key works
+      {d.usage !== undefined && ` · ${usd(d.usage)} spent`}
+      {typeof d.limitRemaining === "number" && ` · ${usd(d.limitRemaining)} left on this key`}
+      {d.freeTier && " · free tier"}
+    </p>
+  );
+}
+
+/** Searchable list of OpenRouter's models; the one picked is used for OpenRouter chats. */
+function OpenRouterModels({ settings: s }: { settings: AiSettings }) {
+  const update = useUpdateAiSettings();
+  const models = useOpenRouterModels(true);
+  const [query, setQuery] = useState("");
+  const [freeOnly, setFreeOnly] = useState(false);
+  const shown = useMemo(() => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return (models.data ?? []).filter((m) => (!freeOnly || m.free) && words.every((w) => `${m.id} ${m.name}`.toLowerCase().includes(w)));
+  }, [models.data, query, freeOnly]);
+  return (
+    <SettingsCard
+      title="OpenRouter model"
+      description={
+        s.openrouterModel
+          ? `OpenRouter chats use ${models.data?.find((m) => m.id === s.openrouterModel)?.name ?? s.openrouterModel}. You can switch for any chat from the message box.`
+          : "Pick the model OpenRouter chats use. You can switch for any chat from the message box."
+      }
+    >
+      <div className="mb-3 flex items-center gap-3">
+        <label className="flex h-8 flex-1 items-center gap-2 rounded-lg bg-muted/60 px-2.5 text-sm text-muted-foreground focus-within:ring-2 focus-within:ring-ring/40">
+          <Search className="size-3.5" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search models, e.g. claude, gemini, llama"
+            aria-label="Search OpenRouter models"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+        <label className="flex shrink-0 items-center gap-2 text-sm">
+          <Switch checked={freeOnly} onCheckedChange={setFreeOnly} aria-label="Free models only" />
+          Free only
+        </label>
+      </div>
+      {models.isPending ? (
+        <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Loading OpenRouter&apos;s models…
+        </p>
+      ) : models.isError ? (
+        <p className="text-sm text-destructive">Couldn&apos;t load OpenRouter&apos;s models: {models.error.message}</p>
+      ) : shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No matching models.</p>
+      ) : (
+        <div className="max-h-80 divide-y overflow-y-auto rounded-lg border scrollbar-thin" role="listbox" aria-label="OpenRouter models">
+          {shown.slice(0, 150).map((m) => {
+            const active = m.id === s.openrouterModel;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => update.mutate({ ...pickOpenRouter(s, m.id, models.data), defaultProvider: s.defaultProvider ?? "openrouter" })}
+                className={cn("flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent", active && "bg-accent/60")}
+              >
+                <Check className={cn("size-4 shrink-0 text-brand", !active && "invisible")} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{m.name}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted-foreground">{m.id}</span>
+                </span>
+                <span className="shrink-0 text-right text-xs text-muted-foreground">
+                  <span className="block">{priceHint(m)}</span>
+                  <span className="flex items-center justify-end gap-1">
+                    {m.vision && <ImageIcon className="size-3" aria-label="Sees images" />}
+                    {Math.round(m.contextLength / 1000).toLocaleString()}K context
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {shown.length > 150 && <p className="mt-2 text-xs text-muted-foreground">Showing 150 of {shown.length}. Search to narrow it down.</p>}
+    </SettingsCard>
   );
 }
 

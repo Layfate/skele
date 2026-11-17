@@ -1,7 +1,8 @@
 // Codex / GPT models through the OpenAI API with the user's own key (Responses API).
 
 import OpenAI from "openai";
-import { effortFor, type Effort } from "../types";
+import { addUsage, joinRounds, MAX_TOOL_ROUNDS, noTooling, parseArgs, runTool, type ApiTooling } from "../tools";
+import { effortFor, type Effort, type TurnUsage } from "../types";
 import type { TurnHandlers, TurnMessage, TurnResult } from "./types";
 
 // Reasoning models take `reasoning`; older chat models reject it.
@@ -16,57 +17,100 @@ export async function streamOpenAI(input: {
   showThinking: boolean;
   signal: AbortSignal;
   on: TurnHandlers;
+  /** File, MCP and web tools for this turn (see ../tools.ts). */
+  tooling?: ApiTooling;
 }): Promise<TurnResult> {
   if (!input.model) return { text: "", error: "Choose an OpenAI model first." };
   const client = new OpenAI({ apiKey: input.apiKey, dangerouslyAllowBrowser: true });
+  const tooling = input.tooling ?? noTooling;
+  const tools: OpenAI.Responses.Tool[] = [
+    ...tooling.tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters, strict: false })),
+    ...(tooling.web ? [{ type: "web_search" as const }] : []),
+  ];
+  const activity: string[] = [];
+  const note = (line: string) => {
+    activity.push(line);
+    input.on.activity(line);
+  };
   let text = "";
   let thinking = "";
-  try {
-    const stream = client.responses.stream(
-      {
-        model: input.model,
-        instructions: input.system,
-        input: input.messages.map((m) =>
-          m.role === "user" && m.images?.length
-            ? {
-                role: "user" as const,
-                content: [
-                  ...m.images.map((i) => ({ type: "input_image" as const, image_url: `data:${i.mediaType};base64,${i.data}`, detail: "auto" as const })),
-                  { type: "input_text" as const, text: m.content || "(image)" },
-                ],
-              }
-            : { role: m.role, content: m.content },
-        ),
-        ...(isReasoningModel(input.model)
-          ? { reasoning: { effort: effortFor("openai", input.effort) as "low" | "medium" | "high", ...(input.showThinking ? { summary: "auto" as const } : {}) } }
-          : {}),
-      },
-      { signal: input.signal },
-    );
-    for await (const event of stream) {
-      if (event.type === "response.output_text.delta") {
-        text += event.delta;
-        input.on.text(text);
-      } else if (event.type === "response.reasoning_summary_text.delta") {
-        thinking += event.delta;
-        input.on.thinking(thinking);
-      }
-    }
-    const final = await stream.finalResponse();
-    const usage = final.usage
+  let usage: TurnUsage | undefined;
+  const result = (extra: Partial<TurnResult> = {}): TurnResult => ({ text, thinking, usage, activity: activity.length ? activity : undefined, ...extra });
+  // The first request sends the conversation; later rounds send only the tool outputs and
+  // continue from the previous response (kept by OpenAI for that).
+  let next: OpenAI.Responses.ResponseInput = input.messages.map((m) =>
+    m.role === "user" && m.images?.length
       ? {
+          role: "user" as const,
+          content: [
+            ...m.images.map((i) => ({ type: "input_image" as const, image_url: `data:${i.mediaType};base64,${i.data}`, detail: "auto" as const })),
+            { type: "input_text" as const, text: m.content || "(image)" },
+          ],
+        }
+      : { role: m.role, content: m.content },
+  );
+  let previous: string | undefined;
+  try {
+    for (let round = 0; ; round++) {
+      const before = { text, thinking };
+      let roundText = "";
+      let roundThinking = "";
+      const stream = client.responses.stream(
+        {
+          model: input.model,
+          instructions: input.system,
+          input: next,
+          ...(previous ? { previous_response_id: previous } : {}),
+          ...(tools.length ? { tools } : {}),
+          ...(isReasoningModel(input.model)
+            ? { reasoning: { effort: effortFor("openai", input.effort) as "low" | "medium" | "high", ...(input.showThinking ? { summary: "auto" as const } : {}) } }
+            : {}),
+        },
+        { signal: input.signal },
+      );
+      for await (const event of stream) {
+        if (event.type === "response.output_text.delta") {
+          roundText += event.delta;
+          input.on.text(joinRounds(before.text, roundText));
+        } else if (event.type === "response.reasoning_summary_text.delta") {
+          roundThinking += event.delta;
+          input.on.thinking(joinRounds(before.thinking, roundThinking));
+        }
+      }
+      const final = await stream.finalResponse();
+      text = joinRounds(before.text, roundText);
+      thinking = joinRounds(before.thinking, roundThinking);
+      if (final.usage) {
+        usage = addUsage(usage, {
           inputTokens: final.usage.input_tokens,
           outputTokens: final.usage.output_tokens,
           cachedTokens: final.usage.input_tokens_details?.cached_tokens || undefined,
+        });
+      }
+      for (const item of final.output) {
+        if (item.type === "web_search_call") {
+          const q = (item as { action?: { query?: string } }).action?.query;
+          note(q ? `Searched the web for “${q}”` : "Searched the web");
         }
-      : undefined;
-    if (final.status === "incomplete") {
-      return { text, thinking, usage, error: `The reply was cut off (${final.incomplete_details?.reason ?? "incomplete"}).` };
+      }
+      if (final.status === "incomplete") {
+        return result({ error: `The reply was cut off (${final.incomplete_details?.reason ?? "incomplete"}).` });
+      }
+      const calls = final.output.flatMap((o) => (o.type === "function_call" ? [o] : []));
+      if (!calls.length || !tooling.tools.length) return result();
+      if (round + 1 >= MAX_TOOL_ROUNDS) return result({ error: `Stopped after ${MAX_TOOL_ROUNDS} rounds of tool calls.` });
+      const outputs: OpenAI.Responses.ResponseInput = [];
+      for (const c of calls) {
+        const out = await runTool(tooling, c.name, parseArgs(c.arguments), note);
+        outputs.push({ type: "function_call_output", call_id: c.call_id, output: out.isError ? `Error: ${out.text}` : out.text });
+        if (input.signal.aborted) return result({ stopped: true });
+      }
+      previous = final.id;
+      next = outputs;
     }
-    return { text, thinking, usage };
   } catch (error) {
-    if (error instanceof OpenAI.APIUserAbortError || input.signal.aborted) return { text, thinking, stopped: true };
-    return { text, thinking, error: openaiError(error) };
+    if (error instanceof OpenAI.APIUserAbortError || input.signal.aborted) return result({ stopped: true });
+    return result({ error: openaiError(error) });
   }
 }
 

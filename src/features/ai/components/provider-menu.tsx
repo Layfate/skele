@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { Check, ChevronDown, Gauge, Settings2 } from "lucide-react";
+import { Check, ChevronDown, Gauge, Settings2, Waypoints } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +19,7 @@ import { routes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { useCodexModels, useOllamaModels } from "../hooks";
 import { listOpenAIModels } from "../providers/openai";
+import { listOpenRouterModels, openRouterName, priceHint, type OpenRouterModel } from "../providers/openrouter";
 import { providerAvailable } from "../run";
 import {
   ANTHROPIC_MODELS,
@@ -37,12 +38,14 @@ import {
 } from "../types";
 import { BrandMark, type BrandLogo } from "./brand-logos";
 
-const PROVIDER_LOGOS: Record<ProviderId, BrandLogo> = {
+// OpenRouter has no mark here: a neutral "routes" icon stands for it.
+const PROVIDER_LOGOS: Record<ProviderId, BrandLogo | null> = {
   "claude-cli": "claude",
   anthropic: "claude",
   "codex-cli": "codex",
   openai: "openai",
   ollama: "ollama",
+  openrouter: null,
 };
 
 export function ProviderIcon({ provider, className }: { provider: ProviderId; className?: string }) {
@@ -56,7 +59,11 @@ export function ProviderIcon({ provider, className }: { provider: ProviderId; cl
         className,
       )}
     >
-      <BrandMark logo={PROVIDER_LOGOS[provider]} className="size-3.5" />
+      {PROVIDER_LOGOS[provider] ? (
+        <BrandMark logo={PROVIDER_LOGOS[provider]} className="size-3.5" />
+      ) : (
+        <Waypoints className="size-3.5" strokeWidth={2} />
+      )}
     </span>
   );
 }
@@ -72,6 +79,7 @@ export function modelLabel(provider: ProviderId, model: string, resolved?: strin
     anthropic: ANTHROPIC_MODELS,
   };
   if (!model && resolved) return prettyModel(resolved);
+  if (provider === "openrouter") return model ? openRouterName(model, true) : PROVIDERS[provider].label;
   const found = lists[provider]?.find((m) => m.id === model);
   if (found) return found.id ? found.label : PROVIDERS[provider].label;
   return prettyModel(model) || PROVIDERS[provider].label;
@@ -85,6 +93,23 @@ export function useOpenAIModels(settings: AiSettings | undefined) {
     staleTime: 60 * 60_000,
     retry: false,
   });
+}
+
+/** OpenRouter's model list (public, cached for an hour). */
+export function useOpenRouterModels(enabled: boolean) {
+  return useQuery({ queryKey: ["openrouter-models"], queryFn: () => listOpenRouterModels(), enabled, staleTime: 60 * 60_000, retry: 1 });
+}
+
+export const openRouterOption = (m: OpenRouterModel): ModelOption => ({ id: m.id, label: m.name, hint: priceHint(m) || undefined });
+
+/** What to save when an OpenRouter model is picked: it, its context window, and the recent list. */
+export function pickOpenRouter(settings: AiSettings, id: string, models: OpenRouterModel[] | undefined): Partial<AiSettings> {
+  const meta = models?.find((m) => m.id === id);
+  return {
+    openrouterModel: id,
+    ...(meta ? { openrouterContext: meta.contextLength } : {}),
+    openrouterRecent: [id, ...settings.openrouterRecent.filter((r) => r !== id)].slice(0, 8),
+  };
 }
 
 function ModelItem({ m, active, onSelect }: { m: ModelOption; active: boolean; onSelect: () => void }) {
@@ -122,6 +147,13 @@ export function ProviderMenu({
   if (settings.openaiModel && !openaiModels.some((m) => m.id === settings.openaiModel)) {
     openaiModels.unshift({ id: settings.openaiModel, label: settings.openaiModel });
   }
+  const router = useOpenRouterModels(providerAvailable("openrouter", settings));
+  const routerAll = (router.data ?? []).map(openRouterOption);
+  // Recently used up top; every model under "More models".
+  const routerRecent: ModelOption[] = settings.openrouterRecent.map((id) => routerAll.find((m) => m.id === id) ?? { id, label: openRouterName(id) });
+  if (provider === "openrouter" && model && !routerRecent.some((m) => m.id === model)) {
+    routerRecent.unshift(routerAll.find((m) => m.id === model) ?? { id: model, label: openRouterName(model) });
+  }
   const codex = useCodexModels(providerAvailable("codex-cli", settings));
   const ollama = useOllamaModels(settings, !!settings.ollamaModel);
   const ollamaModels: ModelOption[] = (ollama.data ?? []).map((m) => ({ id: m.name, label: m.name, hint: m.details?.parameter_size }));
@@ -135,11 +167,17 @@ export function ProviderMenu({
   if (provider === "claude-cli" && model && ![...CLAUDE_CLI_MODELS, ...CLAUDE_MORE_MODELS].some((m) => m.id === model)) {
     claudeModels.push({ id: model, label: prettyModel(model), hint: "Chosen with /model" });
   }
-  const groups: { id: ProviderId; models: ModelOption[]; more?: ModelOption[] }[] = [
+  const groups: { id: ProviderId; models: ModelOption[]; more?: ModelOption[]; empty?: string }[] = [
     { id: "claude-cli", models: claudeModels, more: CLAUDE_MORE_MODELS },
     { id: "anthropic", models: ANTHROPIC_MODELS },
     { id: "codex-cli", models: [CODEX_DEFAULT_MODEL, ...(codex.data ?? [])] },
-    { id: "openai", models: openaiModels },
+    { id: "openai", models: openaiModels, empty: openai.isPending ? "Loading models…" : "No models found for this key." },
+    {
+      id: "openrouter",
+      models: routerRecent,
+      more: routerAll,
+      empty: router.isPending ? "Loading models…" : router.isError ? "Couldn't load OpenRouter's models." : "Pick a model under More models.",
+    },
     { id: "ollama", models: ollamaModels },
   ];
   const unavailable = groups.filter((g) => !providerAvailable(g.id, settings));
@@ -183,19 +221,26 @@ export function ProviderMenu({
                 {PROVIDERS[g.id].kind === "cli" && <span className="ml-auto font-normal">your account</span>}
                 {PROVIDERS[g.id].kind === "local" && <span className="ml-auto font-normal">on this computer</span>}
               </DropdownMenuLabel>
-              {g.models.length === 0 && (
-                <p className="px-2 py-1.5 text-xs text-muted-foreground">{openai.isPending ? "Loading models…" : "No models found for this key."}</p>
-              )}
+              {g.models.length === 0 && g.empty && <p className="px-2 py-1.5 text-xs text-muted-foreground">{g.empty}</p>}
               {g.models.map((m) => (
                 <ModelItem key={m.id || "default"} m={m} active={provider === g.id && model === m.id} onSelect={() => onChange(g.id, m.id)} />
               ))}
-              {g.more && (
+              {g.more && g.more.length > 0 && (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger className="gap-2 pl-8 text-muted-foreground">
                     More models
-                    {provider === g.id && g.more.some((m) => m.id === model) && <span className="ml-auto text-xs">{prettyModel(model)}</span>}
+                    {g.id === "openrouter" ? (
+                      <span className="ml-auto text-xs">{g.more.length}</span>
+                    ) : (
+                      provider === g.id && g.more.some((m) => m.id === model) && <span className="ml-auto text-xs">{prettyModel(model)}</span>
+                    )}
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-52">
+                  <DropdownMenuSubContent
+                    className={cn(
+                      "w-52",
+                      g.id === "openrouter" && "max-h-[min(60vh,var(--radix-dropdown-menu-content-available-height))] w-80 overflow-y-auto scrollbar-thin",
+                    )}
+                  >
                     {g.more.map((m) => (
                       <ModelItem key={m.id} m={m} active={provider === g.id && model === m.id} onSelect={() => onChange(g.id, m.id)} />
                     ))}

@@ -9,6 +9,7 @@ Skele's AI chat (sidebar → **Chat**, `Ctrl/⌘ Shift O`) can use:
 | **Ollama** (local models) | Desktop app and browser | None: runs on this computer |
 | **Claude API** | Anywhere | Your Anthropic API key |
 | **OpenAI API** | Anywhere | Your OpenAI API key |
+| **OpenRouter** | Anywhere | Your OpenRouter API key (hundreds of models, some free) |
 
 Skele finds installed tools automatically (PATH plus the usual install folders, including
 npm, nvm, Homebrew, Volta, Bun and Ollama's own locations on Windows, macOS and Linux).
@@ -29,10 +30,24 @@ Each chat has a shield button below the message box (Claude Code and Codex only)
 | **Read files** | `Read`, `Glob`, `Grep` in the chosen folder, `dontAsk` permission mode (reads outside the folder are refused) | Read-only sandbox in the chosen folder |
 | **Edit files** | Also `Edit`, `Write`, `NotebookEdit`, `acceptEdits` mode. **No shell** | `workspace-write` sandbox in the chosen folder (commands run sandboxed, no network) |
 
+The Claude API, OpenAI API and OpenRouter get the same modes through Skele's own tools
+(`src/features/ai/tools.ts`, run by `src-tauri/src/ai_tools.rs`): **Read files** gives them
+`list_files`, `read_file` and `search_files` in the chat's folder, **Edit files** adds
+`write_file` and `edit_file` (exact, unique replacements). They never run commands. Every path
+is resolved inside the folder in Rust (no `..`, no links out of it) and the folder is checked
+like the CLIs'. Arguments are checked against each tool's schema before it runs, and a reply
+stops after 30 rounds of tool calls. OpenRouter models that can't call tools answer without
+them (the reply says so). Ollama models only chat.
+
 Plus, per chat:
 
-- **Web search**: Claude Code's `WebSearch`/`WebFetch`; Codex `web_search = "live"`.
-- **MCP servers**: the Skele-managed servers you tick (see below).
+- **Web search**: Claude Code's `WebSearch`/`WebFetch`; Codex `web_search = "live"`; the
+  Claude API's `web_search_20260209` tool; OpenAI's `web_search`; OpenRouter's web plugin
+  (billed from OpenRouter credits).
+- **MCP servers**: the Skele-managed servers you tick (see below). API models call them
+  through the desktop app, which keeps one session per server open until Skele quits
+  (`ai_mcp_tools` / `ai_mcp_call`); servers that need an OAuth sign-in, and older SSE
+  servers, can't be used by API models yet.
 
 Nothing ever waits for a permission prompt: every run passes `--permission-prompts none`
 (Claude Code) or `approval_policy = "never"` (Codex), so anything the mode doesn't allow is
@@ -68,7 +83,8 @@ sign in with OAuth need a one-time `claude mcp login <name>` / `codex mcp login 
 ## Plugins
 
 **Settings → AI → Plugins** uses each CLI's own plugin commands (`claude plugin …`,
-`codex plugin …`): list installed plugins, enable/disable/update them (Claude Code), browse
+`codex plugin …`): list installed plugins (the listing is cut down to the fields the page
+shows in Rust, `slim_plugin_list`, since Claude Code's full answer runs to megabytes), enable/disable/update them (Claude Code), browse
 and install from marketplaces, and add, update or remove marketplaces. When a Claude Code
 marketplace declares an install command, Skele shows the command and asks before accepting
 it (`--accept-command <sha256>`).
@@ -114,6 +130,7 @@ scaled to at most 1568 px on the long side and stored on the message as base64.
 | Claude Code | One `--input-format stream-json` user message with image blocks |
 | Codex | Written to temporary files in Skele's data folder, passed with `--image=<file>`, removed after the run |
 | Claude API / OpenAI API | Image content blocks (`image` / `input_image`) |
+| OpenRouter | `image_url` content parts (models with image input only) |
 | Ollama | The message's `images` (vision models only) |
 
 Claude Code and Codex get the images of the message they answer; API and local models get the
@@ -159,6 +176,21 @@ Skele answers these itself: `/usage`, `/status`, `/compact`, `/model [name]`,
   or when it fails because it's at a limit, signed out, offline or not installed. The reply
   says so.
 
+## OpenRouter
+
+**Settings → AI → Providers**: add an OpenRouter key (openrouter.ai/keys); Skele checks it and
+shows what it has spent and what's left. **OpenRouter model** then lists every text model from
+OpenRouter's public model list (cached for an hour), searchable, with prices, context window
+and image support, and a **Free only** filter. The model menu shows the recently used ones and
+all of them under **More models**; `/model <provider/model>` works too.
+
+Requests go to `https://openrouter.ai/api/v1/chat/completions` (streamed, OpenAI-compatible)
+with plain `fetch`, so it works in the browser as well. Reasoning is sent only to models that
+accept it, at the chosen effort lowered to the nearest level the model lists; with *Show
+reasoning* off it's requested with `exclude: true`. Images go only to models that take image
+input; the others are told an image was attached. The context budget is three quarters of
+the model's window (at most 150K tokens). Replies record OpenRouter's reported cost.
+
 ## Local models (Ollama)
 
 **Settings → AI → Local models** finds Ollama, starts it if it's installed but not running,
@@ -179,6 +211,8 @@ keep their own session files as they normally do.
 |---|---|
 | `src-tauri/src/ai.rs` | Runs the CLIs: access modes, MCP/sub-agent files, Codex isolation, detection, folder checks |
 | `src-tauri/src/ai_ext.rs` | Plugins and marketplaces, the CLIs' MCP lists (masked), MCP connection test, skills, Claude Code's catalog |
+| `src-tauri/src/ai_tools.rs` | File tools and MCP sessions for API models |
+| `src/features/ai/tools.ts` | The tools an API model gets per chat, argument checks |
 | `src-tauri/src/clipboard.rs` | Alt+V: the clipboard image (Windows) |
 | `src/features/ai/images.ts` | Pasted images: decoding, downscaling, clipboard |
 | `src-tauri/src/ai_ollama.rs` | Ollama status, models, streaming chat, downloads, start |
@@ -188,7 +222,7 @@ keep their own session files as they normally do.
 | `src/features/ai/limits.ts` | Plan limits, error kinds, usage ledger |
 | `src/features/ai/extensions.ts` | MCP registry and presets, plugins, skills |
 | `src/features/ai/agents.ts` | Agents, @mentions, Claude Code sub-agents |
-| `src/features/ai/providers/` | Claude Code / Codex stream parsers, Ollama, Claude API, OpenAI API |
+| `src/features/ai/providers/` | Claude Code / Codex stream parsers, Ollama, Claude API, OpenAI API, OpenRouter |
 
 Tests: `tests/unit/ai.test.ts`, `tests/unit/ai-workspace.test.ts`, `tests/e2e/ai.spec.ts`,
 and `cargo test` (including opt-in live tests that run the real CLIs:

@@ -26,7 +26,8 @@ const fmt = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : 
 export function UsageTab({ settings }: { settings: AiSettings }) {
   const desktop = isDesktop();
   const qc = useQueryClient();
-  const plans = useQuery({ queryKey: ["ai-plan-usage"], queryFn: () => planUsage(settings), enabled: desktop, staleTime: 2 * 60_000, retry: false });
+  const showPlans = desktop || !!settings.openrouterKey;
+  const plans = useQuery({ queryKey: ["ai-plan-usage", !!settings.openrouterKey], queryFn: () => planUsage(settings), enabled: showPlans, staleTime: 2 * 60_000, retry: false });
   const ledger = useLedger();
   const [range, setRange] = useState(7);
   const [clearing, setClearing] = useState(false);
@@ -35,10 +36,10 @@ export function UsageTab({ settings }: { settings: AiSettings }) {
 
   return (
     <>
-      {desktop && (
+      {showPlans && (
         <SettingsCard
           title="Plan limits"
-          description="How much of your Claude Code and Codex plan is used. Skele warns you before a limit and, if you like, answers with the local model once one is reached."
+          description="How much of your Claude Code and Codex plans and your OpenRouter free requests are used. Skele warns you before a limit and, if you like, answers with the local model once one is reached."
         >
           {plans.isPending ? (
             <StatusLine tone="busy">Checking…</StatusLine>
@@ -113,8 +114,8 @@ export function UsageTab({ settings }: { settings: AiSettings }) {
             </table>
           </div>
         )}
-        {settings.anthropicKey || settings.openaiKey ? (
-          <p className="mt-3 text-xs text-muted-foreground">API keys are billed by their providers: see console.anthropic.com and platform.openai.com/usage for exact costs.</p>
+        {settings.anthropicKey || settings.openaiKey || settings.openrouterKey ? (
+          <p className="mt-3 text-xs text-muted-foreground">API keys are billed by their providers: see console.anthropic.com, platform.openai.com/usage and openrouter.ai/activity for exact costs.</p>
         ) : null}
         {ledger.data && Object.keys(ledger.data.days).length > 0 && (
           <Button variant="ghost" size="sm" className="mt-3" onClick={() => setClearing(true)}>

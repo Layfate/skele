@@ -331,15 +331,41 @@ export type Plugin = {
 
 export type PluginList = { installed: Plugin[]; available: Plugin[] };
 
+/**
+ * One plugin from either CLI. Claude Code lists installed plugins by `id`
+ * ("name@marketplace") with no name; available ones (and Codex's) have `pluginId` + `name`.
+ */
+export function normalizePlugin(raw: Plugin & { id?: string }): Plugin | null {
+  const pluginId = raw.pluginId || raw.id;
+  if (!pluginId) return null;
+  const [base, market] = pluginId.split("@");
+  return { ...raw, pluginId, name: raw.name || base, marketplaceName: raw.marketplaceName || market || undefined };
+}
+
+export function pluginListFrom(stdout: string): PluginList | null {
+  const data = jsonFrom<Partial<PluginList> | Plugin[]>(stdout);
+  if (!data) return null;
+  const norm = (list: unknown) => (Array.isArray(list) ? list : []).map(normalizePlugin).filter((p): p is Plugin => !!p);
+  if (Array.isArray(data)) return { installed: norm(data).map((p) => ({ ...p, installed: true, enabled: p.enabled ?? true })), available: [] };
+  const available = norm(data.available);
+  const byId = new Map(available.map((p) => [p.pluginId, p]));
+  const installed = norm(data.installed).map((p) => ({
+    ...p,
+    // Claude Code leaves descriptions off installed plugins; the marketplace entry has it.
+    description: p.description || byId.get(p.pluginId)?.description,
+    installed: true,
+    enabled: p.enabled ?? true,
+  }));
+  const ids = new Set(installed.map((p) => p.pluginId));
+  return { installed, available: available.filter((p) => !ids.has(p.pluginId)) };
+}
+
 export async function listPlugins(tool: CliTool, path?: string): Promise<PluginList> {
   const out = await cliManage(tool, { action: "pluginList" }, path);
   if (!out.ok) throw new Error(captureError(out, "Listing plugins"));
-  const data = jsonFrom<Partial<PluginList> | Plugin[]>(out.stdout);
-  if (!data) throw new Error("Couldn't read the plugin list.");
-  if (Array.isArray(data)) return { installed: data, available: [] };
-  const installed = (data.installed ?? []).map((p) => ({ ...p, installed: true, enabled: p.enabled ?? true }));
-  const ids = new Set(installed.map((p) => p.pluginId));
-  return { installed, available: (data.available ?? []).filter((p) => !ids.has(p.pluginId)) };
+  const list = pluginListFrom(out.stdout);
+  if (!list) throw new Error("Couldn't read the plugin list.");
+  return list;
 }
 
 export type Marketplace = { name: string; source?: string; repo?: string; url?: string; path?: string; installLocation?: string };

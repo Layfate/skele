@@ -1,6 +1,7 @@
 // Workspace registry + app-wide preferences. Lives in its own database so workspace exports
 // never contain preferences or integration tokens.
 
+import type { AutocorrectOptions } from "@/lib/autocorrect";
 import { badRequest, newId, notFound, now } from "./common";
 import { storageEngine } from "./engine";
 import type { WorkspaceStore } from "./store";
@@ -95,6 +96,8 @@ export type Preferences = {
   recentSearches: string[];
   /** Overrides for customisable shortcuts: action id → key combo ("mod+k"). */
   shortcuts: Record<string, string>;
+  /** Autocorrect while typing (read with `autocorrectOptions`, which fills in defaults). */
+  autocorrect?: Partial<AutocorrectOptions>;
 };
 
 export const DEFAULT_PREFERENCES: Preferences = {

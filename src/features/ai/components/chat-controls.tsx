@@ -29,7 +29,7 @@ const MODES: { id: AccessMode; label: string; short: string; hint: string; icon:
     id: "edit",
     label: "Edit files",
     short: "Edit",
-    hint: "Can also create and change files in that folder. Claude Code gets no shell; Codex runs commands in its sandbox.",
+    hint: "Can also create and change files in that folder. Claude Code gets no shell; Codex runs commands in its sandbox; API models get Skele's file tools (no commands).",
     icon: PencilLine,
   },
 ];
@@ -42,6 +42,7 @@ export function AccessMenu({
   value,
   servers,
   cliExtensions,
+  local = true,
   onChange,
 }: {
   provider: ProviderId;
@@ -49,8 +50,11 @@ export function AccessMenu({
   servers: McpServer[];
   /** The CLIs also use their own MCP servers, plugins and skills. */
   cliExtensions: boolean;
+  /** Files and MCP servers are available (the desktop app); in a browser only web search is. */
+  local?: boolean;
   onChange: (patch: Partial<Access>) => void;
 }) {
+  const cli = PROVIDERS[provider].kind === "cli";
   const [open, setOpen] = useState(false);
   const enabled = servers.filter((s) => s.enabled);
   const on = new Set(value.mcp);
@@ -121,6 +125,9 @@ export function AccessMenu({
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-0">
+        {!local && <p className="px-3 pt-2.5 text-xs text-muted-foreground">Reading files and MCP servers need the Skele desktop app.</p>}
+        {local && (
+        <>
         <div className="p-1.5" role="radiogroup" aria-label="Access">
           {MODES.map((m) => (
             <button
@@ -164,16 +171,21 @@ export function AccessMenu({
           </div>
           {folderError && <p className="mt-1 text-destructive">{folderError}</p>}
         </div>
+        </>
+        )}
         <label className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-sm">
           <span className="flex items-center gap-2">
             <Globe className="size-4 text-muted-foreground" strokeWidth={1.75} />
             <span>
               <span className="block">Web search</span>
-              <span className="block text-xs text-muted-foreground">Search the web and read pages</span>
+              <span className="block text-xs text-muted-foreground">
+                {provider === "openrouter" ? "OpenRouter's web search (billed from your credits)" : "Search the web and read pages"}
+              </span>
             </span>
           </span>
           <Switch checked={value.web} onCheckedChange={(web) => onChange({ web })} />
         </label>
+        {local && (
         <div className="border-t px-1.5 py-1.5">
           <p className="flex items-center justify-between px-1.5 pb-1 text-xs font-medium text-muted-foreground">
             MCP servers
@@ -197,10 +209,11 @@ export function AccessMenu({
               </label>
             ))
           )}
-          {cliExtensions && (
+          {cli && cliExtensions && (
             <p className="px-1.5 pt-1 text-xs text-muted-foreground">Also uses the MCP servers, plugins and skills set up in Claude Code and Codex.</p>
           )}
         </div>
+        )}
       </PopoverContent>
     </Popover>
   );

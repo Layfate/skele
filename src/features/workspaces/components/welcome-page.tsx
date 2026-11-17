@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { IconTile } from "@/components/common";
 import { Logo } from "@/components/logo";
+import { useIsDesktop } from "@/hooks/use-is-desktop";
 import { routes } from "@/lib/routes";
 import { errorMessage } from "@/lib/errors";
 import { pickFile } from "@/features/editor/extensions/skele-storage";
@@ -17,6 +18,7 @@ import { useCreateWorkspace, useImportWorkspace, useOpenWorkspace, useWorkspaces
 /** First-run screen. No account, no email — everything is created on this device. */
 export function WelcomePage() {
   const router = useRouter();
+  const desktop = useIsDesktop();
   const workspaces = useWorkspaces();
   const create = useCreateWorkspace();
   const importWs = useImportWorkspace();
@@ -123,7 +125,7 @@ export function WelcomePage() {
         )}
 
         <p className="mt-10 text-xs text-muted-foreground">
-          Your workspaces live in this {typeof window !== "undefined" && "__TAURI_INTERNALS__" in window ? "app" : "browser"}&apos;s local
+          Your workspaces live in this {desktop ? "app" : "browser"}&apos;s local
           storage. Export backups from Settings → Data &amp; backup to keep a copy elsewhere.
         </p>
       </main>

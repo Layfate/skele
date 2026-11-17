@@ -18,11 +18,14 @@ export const turnImages = (m: ChatMessage): TurnImage[] | undefined =>
 const imagesNote = (m: ChatMessage) => (m.images?.length ? ` [${m.images.length === 1 ? "an image" : `${m.images.length} images`} attached]` : "");
 
 /** How many tokens of conversation to send, leaving room for the system prompt and the reply. */
-export function contextBudget(provider: ProviderId, settings: Pick<AiSettings, "ollamaContext">): number {
+export function contextBudget(provider: ProviderId, settings: Pick<AiSettings, "ollamaContext"> & Partial<Pick<AiSettings, "openrouterContext">>): number {
   switch (provider) {
     case "ollama":
       // Small windows: keep a quarter for the reply.
       return Math.max(1024, Math.floor(settings.ollamaContext * 0.75) - 300);
+    case "openrouter":
+      // Windows range from 4K to 2M tokens; the chosen model's comes from OpenRouter's list.
+      return Math.max(1024, Math.min(150_000, Math.floor((settings.openrouterContext || 32_000) * 0.75) - 300));
     case "openai":
       return 100_000;
     case "anthropic":
