@@ -204,11 +204,11 @@ server. Full details: [DESKTOP.md](DESKTOP.md).
   for installed copies, `window-state.json` in the data folder otherwise.
 - **Native integration:** single instance, native message and save dialogs, external links
   in the default browser, in-app updates from GitHub Releases (installed copies only), and a
-  loopback redirect for the optional Spotify sign-in. The page-side bridge
+  loopback redirect for the optional Spotify and Gmail sign-ins. The page-side bridge
   (`src/lib/desktop.ts`) is a no-op in browsers.
 - **Least privilege:** the page has no general file-system, shell or Node access; its
   permissions are listed in `src-tauri/capabilities/`, and the CSP allows only the bundled app
-  plus the Spotify API.
+  plus the Spotify, Google sign-in and Gmail APIs (and the AI providers).
 - **Builds:** Windows (NSIS, MSI, portable zip), macOS (DMG, signed and notarised when
   credentials are set) and Linux (AppImage, deb, rpm, tarball), built and smoke-tested by
   `.github/workflows/build.yml`.

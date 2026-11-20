@@ -6,6 +6,20 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-20
+
+### Added
+
+- **Gmail** (optional, Settings → Integrations): connect your Gmail account with your own
+  Google Cloud OAuth client. **Mail** in the sidebar shows your inbox, starred, sent and all
+  mail with Gmail search; HTML email opens in a sandboxed view with remote images held back
+  until you ask. Compose, reply, reply all and forward (replies stay in the thread). **Save as a
+  page** turns an email into a page. With "Let the AI read your mail" on, the Claude API,
+  OpenAI API and OpenRouter can search and read your mail when you ask. See
+  [docs/GMAIL.md](docs/GMAIL.md). Desktop builds made with a built-in Google client
+  (`NEXT_PUBLIC_GMAIL_CLIENT_ID`) connect in one click: **Connect Gmail** opens your browser,
+  you sign in with Google, done.
+
 ## [0.2.2] - 2026-11-17
 
 ### Added

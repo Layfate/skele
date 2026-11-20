@@ -220,6 +220,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           NEXT_PUBLIC_SPOTIFY_CLIENT_ID: ${{ vars.SPOTIFY_CLIENT_ID }}
+          NEXT_PUBLIC_GMAIL_CLIENT_ID: ${{ vars.GMAIL_CLIENT_ID }}
+          NEXT_PUBLIC_GMAIL_CLIENT_SECRET: ${{ vars.GMAIL_CLIENT_SECRET }}
           # No FUSE on the runners; linuxdeploy (AppImage) extracts itself instead.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |

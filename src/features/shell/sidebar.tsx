@@ -11,6 +11,7 @@ import {
   FileText,
   FolderKanban,
   House,
+  Mail,
   MessagesSquare,
   Network,
   Plus,
@@ -28,6 +29,7 @@ import { useUI } from "@/stores/ui";
 import { usePages, useCreatePage, useRecent } from "@/features/pages/hooks";
 import { PageIcon } from "@/components/common";
 import { SpotifySidebarWidget } from "@/features/spotify/components/spotify-player";
+import { useGmailStatus, useUnreadCount } from "@/features/gmail/hooks";
 import { PageTree } from "@/features/pages/components/page-tree";
 import { TrashPopover } from "@/features/pages/components/trash-popover";
 import { WorkspaceSwitcher } from "@/features/workspaces/components/workspace-switcher";
@@ -41,6 +43,8 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const create = useCreatePage(workspaceId);
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const setCommandOpen = useUI((s) => s.setCommandOpen);
+  const gmail = !!useGmailStatus().data?.connected;
+  const unread = useUnreadCount(gmail).data ?? 0;
 
   const { favorites, pinned } = useMemo(() => {
     const list = pages.data?.pages ?? [];
@@ -51,7 +55,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     };
   }, [pages.data]);
 
-  const nav: { href: string; label: string; icon: LucideIcon; exact?: boolean }[] = [
+  const nav: { href: string; label: string; icon: LucideIcon; exact?: boolean; badge?: number }[] = [
     { href: routes.home, label: "Home", icon: House, exact: true },
     { href: routes.chat(), label: "Chat", icon: MessagesSquare },
     { href: routes.notes, label: "Notes", icon: FileText },
@@ -60,6 +64,8 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     { href: routes.databases, label: "Databases", icon: Table2 },
     { href: routes.graph, label: "Graph view", icon: Network },
     { href: routes.calendar, label: "Calendar", icon: CalendarDays },
+    // Mail shows once Gmail is connected (Settings → Integrations).
+    ...(gmail ? [{ href: routes.mail(), label: "Mail", icon: Mail, badge: unread }] : []),
   ];
 
   return (
@@ -98,6 +104,11 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           return (
             <NavLink key={item.href} href={item.href} icon={item.icon} active={active}>
               {item.label}
+              {!!item.badge && (
+                <span className="ml-auto text-xs text-muted-foreground tabular-nums" aria-label={`${item.badge} unread`}>
+                  {item.badge > 999 ? "999+" : item.badge}
+                </span>
+              )}
             </NavLink>
           );
         })}

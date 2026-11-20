@@ -1,16 +1,17 @@
-//! Loopback redirect for desktop OAuth sign-ins (Spotify, Authorization Code + PKCE).
+//! Loopback redirect for desktop OAuth sign-ins (Spotify and Gmail, Authorization Code + PKCE).
 //!
-//! Spotify only accepts `https://` or loopback-IP redirect URIs, and the desktop window's own
+//! Spotify and Google only accept `https://` or loopback-IP redirect URIs, and the desktop window's own
 //! origin is neither. So the desktop app opens the sign-in page in the system browser with a
 //! `http://127.0.0.1:<port>/callback` redirect URI and this module listens on that address just
-//! long enough to receive the redirect. The page then finishes the PKCE exchange itself; no
-//! secret is involved and nothing but the redirect's query string is read.
+//! long enough to receive the redirect. The page then finishes the PKCE exchange itself and
+//! nothing but the redirect's query string is read here. `provider` only names the service in
+//! the messages this module shows.
 //!
 //! The flow is split in two so failures show up before the browser opens:
 //! 1. `oauth_start` binds the listener. It prefers port 43827 (redirect URIs registered with that
 //!    port keep working) and falls back to a port the OS picks when 43827 is taken or reserved;
 //!    Spotify accepts any port when the redirect URI is registered without one
-//!    (`http://127.0.0.1/callback`). Starting again closes an earlier, abandoned attempt first,
+//!    (`http://127.0.0.1/callback`), and Google desktop clients accept any loopback port. Starting again closes an earlier, abandoned attempt first,
 //!    so a sign-in whose browser never opened can't hold the port.
 //! 2. `oauth_wait` accepts connections until the redirect with the expected `state` arrives,
 //!    the user cancels, or it times out. Every connection is handled on its own thread, so idle
@@ -43,7 +44,7 @@ impl OAuthError {
     }
 }
 
-/// A listening sign-in: the redirect URI to send to Spotify, and why the preferred port
+/// A listening sign-in: the redirect URI to send to the provider, and why the preferred port
 /// wasn't used (if it wasn't).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +57,8 @@ pub struct OAuthSession {
 
 struct Pending {
     state: String,
+    /// The service being connected ("Spotify", "Gmail"), for messages.
+    provider: String,
     listener: Mutex<Option<TcpListener>>,
     cancelled: AtomicBool,
 }
@@ -103,7 +106,12 @@ impl Broker {
         }
     }
 
-    pub fn start(&self, state: String, preferred: u16) -> Result<OAuthSession, OAuthError> {
+    pub fn start(
+        &self,
+        state: String,
+        preferred: u16,
+        provider: &str,
+    ) -> Result<OAuthSession, OAuthError> {
         if state.is_empty() {
             return Err(OAuthError::new(
                 "invalid_state",
@@ -144,6 +152,7 @@ impl Broker {
             .port();
         *slot = Some(Arc::new(Pending {
             state,
+            provider: provider.to_string(),
             listener: Mutex::new(Some(listener)),
             cancelled: AtomicBool::new(false),
         }));
@@ -160,7 +169,7 @@ impl Broker {
         let pending = lock(&self.current).clone().ok_or_else(|| {
             OAuthError::new(
                 "no_session",
-                "No Spotify sign-in is in progress. Click Connect Spotify to start one.",
+                "No sign-in is in progress. Click Connect again to start one.",
             )
         })?;
         let (tx, rx) = mpsc::channel::<String>();
@@ -176,7 +185,8 @@ impl Broker {
                 break Err(OAuthError::new(
                     "timeout",
                     format!(
-                        "Spotify didn't send the sign-in back to Skele within {} minutes. Click Connect Spotify to try again.",
+                        "{0} didn't send the sign-in back to Skele within {1} minutes. Click Connect {0} to try again.",
+                        pending.provider,
                         timeout.as_secs().div_ceil(60)
                     ),
                 ));
@@ -189,7 +199,8 @@ impl Broker {
                 Ok((stream, _)) => {
                     let tx = tx.clone();
                     let state = pending.state.clone();
-                    std::thread::spawn(move || handle(stream, &state, &tx));
+                    let provider = pending.provider.clone();
+                    std::thread::spawn(move || handle(stream, &state, &provider, &tx));
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(50))
@@ -258,9 +269,9 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 #[derive(Debug, PartialEq)]
 enum Callback {
-    /// Spotify returned a code (or anything else for this sign-in): hand it to the page.
+    /// The provider returned a code (or anything else for this sign-in): hand it to the page.
     Complete,
-    /// Spotify returned an error for this sign-in, such as `access_denied`.
+    /// The provider returned an error for this sign-in, such as `access_denied`.
     Failed(String),
     /// A redirect from an older attempt (a stale tab): ignore it and keep waiting.
     Stale,
@@ -321,7 +332,7 @@ fn read_head(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-fn handle(mut stream: TcpStream, expected_state: &str, tx: &mpsc::Sender<String>) {
+fn handle(mut stream: TcpStream, expected_state: &str, provider: &str, tx: &mpsc::Sender<String>) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let request = read_head(&mut stream);
@@ -330,16 +341,27 @@ fn handle(mut stream: TcpStream, expected_state: &str, tx: &mpsc::Sender<String>
     };
     match classify(&query, expected_state) {
         Callback::Complete => {
-            respond(stream, "200 OK", &page("You can close this tab", "Return to Skele to finish connecting Spotify."));
+            respond(
+                stream,
+                "200 OK",
+                &page(
+                    "You can close this tab",
+                    &format!("Return to Skele to finish connecting {provider}."),
+                ),
+            );
             let _ = tx.send(query);
         }
         Callback::Failed(error) => {
             let text = if error == "access_denied" {
-                "You didn't allow Skele to use your Spotify account. You can close this tab and connect again from Skele.".to_string()
+                format!("You didn't allow Skele to use your {provider} account. You can close this tab and connect again from Skele.")
             } else {
-                format!("Spotify reported “{error}”. You can close this tab; Skele shows what to do next.")
+                format!("{provider} reported “{error}”. You can close this tab; Skele shows what to do next.")
             };
-            respond(stream, "200 OK", &page("Spotify wasn't connected", &text));
+            respond(
+                stream,
+                "200 OK",
+                &page(&format!("{provider} wasn't connected"), &text),
+            );
             let _ = tx.send(query);
         }
         Callback::Stale => respond(
@@ -347,7 +369,7 @@ fn handle(mut stream: TcpStream, expected_state: &str, tx: &mpsc::Sender<String>
             "400 Bad Request",
             &page(
                 "This sign-in link has expired",
-                "It belongs to an earlier attempt. Return to Skele and finish the sign-in that's open there, or click Connect Spotify again.",
+                &format!("It belongs to an earlier attempt. Return to Skele and finish the sign-in that's open there, or click Connect {provider} again."),
             ),
         ),
     }
@@ -355,9 +377,13 @@ fn handle(mut stream: TcpStream, expected_state: &str, tx: &mpsc::Sender<String>
 
 static BROKER: Broker = Broker::new();
 
+/// `provider` names the service in messages; it defaults to Spotify, which called this first.
 #[tauri::command]
-pub fn oauth_start(state: String) -> Result<OAuthSession, OAuthError> {
-    BROKER.start(state, PREFERRED_PORT)
+pub fn oauth_start(state: String, provider: Option<String>) -> Result<OAuthSession, OAuthError> {
+    let provider = provider
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| "Spotify".into());
+    BROKER.start(state, PREFERRED_PORT, &provider)
 }
 
 #[tauri::command]
@@ -426,7 +452,7 @@ mod tests {
     #[test]
     fn starts_on_the_preferred_port() {
         let broker = Broker::new();
-        let session = broker.start("s".into(), 43901).unwrap();
+        let session = broker.start("s".into(), 43901, "Spotify").unwrap();
         assert_eq!(session.port, 43901);
         assert!(session.preferred_port);
         assert_eq!(session.preferred_port_error, None);
@@ -438,7 +464,7 @@ mod tests {
     fn falls_back_to_another_port_when_the_preferred_one_is_taken() {
         let _other_program = TcpListener::bind(("127.0.0.1", 43902)).unwrap();
         let broker = Broker::new();
-        let session = broker.start("s".into(), 43902).unwrap();
+        let session = broker.start("s".into(), 43902, "Spotify").unwrap();
         assert_ne!(session.port, 43902);
         assert!(!session.preferred_port);
         assert!(session.preferred_port_error.unwrap().contains("43902"));
@@ -453,8 +479,11 @@ mod tests {
     fn starting_again_releases_an_abandoned_attempt() {
         // The first attempt is never waited on (its browser didn't open, for example).
         let broker = Broker::new();
-        assert_eq!(broker.start("first".into(), 43903).unwrap().port, 43903);
-        let second = broker.start("second".into(), 43903).unwrap();
+        assert_eq!(
+            broker.start("first".into(), 43903, "Spotify").unwrap().port,
+            43903
+        );
+        let second = broker.start("second".into(), 43903, "Spotify").unwrap();
         assert_eq!(
             second.port, 43903,
             "the earlier listener must give the port back"
@@ -467,7 +496,7 @@ mod tests {
     #[test]
     fn receives_the_redirect_and_ignores_other_requests() {
         let broker = leak();
-        broker.start("s1".into(), 43904).unwrap();
+        broker.start("s1".into(), 43904, "Spotify").unwrap();
         let server = waiting(broker, Duration::from_secs(10));
         // A browser's speculative, idle connection must not block anything.
         let _idle = TcpStream::connect(("127.0.0.1", 43904)).unwrap();
@@ -484,7 +513,7 @@ mod tests {
     #[test]
     fn passes_spotify_errors_to_the_page() {
         let broker = leak();
-        broker.start("s1".into(), 43905).unwrap();
+        broker.start("s1".into(), 43905, "Spotify").unwrap();
         let server = waiting(broker, Duration::from_secs(10));
         let reply = get(43905, "/callback?error=access_denied&state=s1");
         assert!(reply.contains("didn&#39;t allow") || reply.contains("didn't allow"));
@@ -497,7 +526,7 @@ mod tests {
     #[test]
     fn cancel_ends_the_wait_and_frees_the_port() {
         let broker = leak();
-        broker.start("s1".into(), 43906).unwrap();
+        broker.start("s1".into(), 43906, "Spotify").unwrap();
         let server = waiting(broker, Duration::from_secs(10));
         std::thread::sleep(Duration::from_millis(150));
         broker.cancel();
@@ -508,10 +537,10 @@ mod tests {
     #[test]
     fn a_new_start_cancels_the_previous_wait() {
         let broker = leak();
-        broker.start("s1".into(), 43907).unwrap();
+        broker.start("s1".into(), 43907, "Spotify").unwrap();
         let old = waiting(broker, Duration::from_secs(10));
         std::thread::sleep(Duration::from_millis(150));
-        broker.start("s2".into(), 43907).unwrap();
+        broker.start("s2".into(), 43907, "Spotify").unwrap();
         assert_eq!(old.join().unwrap().unwrap_err().code, "cancelled");
         let new = waiting(broker, Duration::from_secs(10));
         assert!(get(43907, "/callback?code=c&state=s2").starts_with("HTTP/1.1 200"));
@@ -521,7 +550,7 @@ mod tests {
     #[test]
     fn times_out() {
         let broker = Broker::new();
-        broker.start("s1".into(), 43908).unwrap();
+        broker.start("s1".into(), 43908, "Spotify").unwrap();
         let err = broker.wait(Duration::from_millis(200)).unwrap_err();
         assert_eq!(err.code, "timeout");
         TcpListener::bind(("127.0.0.1", 43908)).expect("port released after timeout");
@@ -534,7 +563,10 @@ mod tests {
             "no_session"
         );
         assert_eq!(
-            Broker::new().start(String::new(), 43909).unwrap_err().code,
+            Broker::new()
+                .start(String::new(), 43909, "Spotify")
+                .unwrap_err()
+                .code,
             "invalid_state"
         );
     }

@@ -9,6 +9,7 @@
 //
 // Each provider runs its own loop (its message format differs) and calls `runTool` here.
 
+import { gmailTools, gmailToolsEnabled } from "@/features/gmail/ai-tools";
 import { isDesktop } from "@/lib/desktop";
 import { toSpec } from "./extensions";
 import type { Chat, McpServer } from "./types";
@@ -148,6 +149,7 @@ export async function apiTooling(
   workspace = false,
 ): Promise<ApiTooling> {
   const tools: ApiTool[] = workspace ? workspaceTools(chat.workspaceId) : [];
+  if (await gmailToolsEnabled()) tools.push(...gmailTools());
   if (isDesktop()) {
     const mode = chat.mode ?? "chat";
     if ((mode === "read" || mode === "edit") && chat.folder) tools.push(...fileTools(chat.folder, mode === "edit"));

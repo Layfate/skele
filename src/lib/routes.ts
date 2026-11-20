@@ -15,6 +15,7 @@ export const routes = {
   databases: "/databases",
   graph: "/graph",
   calendar: "/calendar",
+  mail: (opts?: { compose?: boolean }) => (opts?.compose ? "/mail?compose=1" : "/mail"),
   chat: (id?: string) => (id ? `/chat?id=${encodeURIComponent(id)}` : "/chat"),
   settings: (tab?: string) => (tab ? `/settings?tab=${tab}` : "/settings"),
   /** Settings → AI, optionally on one of its tabs (providers, local, mcp, plugins, skills, agents, usage). */
