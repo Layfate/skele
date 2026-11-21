@@ -10,6 +10,11 @@
 //!   mode, which refuses reads outside the folder; Codex: its read-only sandbox).
 //! - `edit`: also change files in that folder (Claude: `acceptEdits`, no shell; Codex: its
 //!   `workspace-write` sandbox).
+//! - `full`: like the CLI in a terminal. It starts in a folder of the user's choice (the home
+//!   folder by default), reads and edits anywhere, and uses the CLI's own MCP servers,
+//!   plugins, skills and connectors. Shell commands only when `shell` is on (Claude:
+//!   `bypassPermissions`, with built-in tools limited to file, skill and MCP tools unless
+//!   `shell`; Codex: read-only sandbox, or no sandbox with `shell`).
 //!
 //! Nothing ever waits for a permission prompt: anything a mode doesn't allow is refused
 //! (`--permission-prompts none`) and reported back as a denial.
@@ -322,6 +327,28 @@ pub(crate) fn validate_folder(raw: &str) -> CmdResult<PathBuf> {
     Ok(canon)
 }
 
+/// The folder a `full` run starts in: any existing folder (a drive root or the home folder
+/// too), or the home folder when none is given.
+pub(crate) fn validate_start_folder(raw: Option<&str>) -> CmdResult<PathBuf> {
+    let raw = raw.map(str::trim).unwrap_or("");
+    let p = if raw.is_empty() {
+        home().ok_or("Couldn't find your home folder.")?
+    } else {
+        PathBuf::from(raw)
+    };
+    if !p.is_absolute() {
+        return Err("The folder must be a full path.".into());
+    }
+    let canon = plain_path(
+        std::fs::canonicalize(&p)
+            .map_err(|_| format!("The folder {} doesn't exist.", p.display()))?,
+    );
+    if !canon.is_dir() {
+        return Err(format!("{} isn't a folder.", p.display()));
+    }
+    Ok(canon)
+}
+
 /// One MCP server Skele hands to a run (configured in Settings → AI → MCP servers).
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -500,7 +527,52 @@ pub(crate) fn claude_user_servers(claude_json: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn claude_config_file() -> Option<PathBuf> {
+/// One server from Claude Code's user config (`mcpServers.<name>`) as a spec Skele can run
+/// itself (API models in "full" chats).
+pub(crate) fn claude_server_spec(claude_json: &str, name: &str) -> CmdResult<McpServerSpec> {
+    let v: serde_json::Value = serde_json::from_str(claude_json)
+        .map_err(|_| "Couldn't read Claude Code's settings.".to_string())?;
+    let s = v
+        .get("mcpServers")
+        .and_then(|m| m.get(name))
+        .filter(|s| s.is_object())
+        .ok_or_else(|| format!("Claude Code has no MCP server called {name}."))?;
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_string();
+    let map = |v: &serde_json::Value| -> BTreeMap<String, String> {
+        v.as_object()
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let transport = s["type"].as_str().unwrap_or(if s.get("url").is_some() {
+        "http"
+    } else {
+        "stdio"
+    });
+    let spec = McpServerSpec {
+        name: name.to_string(),
+        transport: transport.to_string(),
+        command: text(&s["command"]),
+        args: s["args"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        env: map(&s["env"]),
+        url: text(&s["url"]),
+        headers: map(&s["headers"]),
+    };
+    spec.validate()?;
+    Ok(spec)
+}
+
+pub(crate) fn claude_config_file() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Some(PathBuf::from(dir).join(".claude.json"));
     }
@@ -521,12 +593,15 @@ pub struct CliRunArgs {
     /// Don't keep a session on disk (used for the quick usage check).
     #[serde(default)]
     ephemeral: bool,
-    /// "chat" (default), "read" or "edit".
+    /// "chat" (default), "read", "edit" or "full".
     #[serde(default)]
     mode: Option<String>,
-    /// The folder for "read" / "edit".
+    /// The folder for "read" / "edit"; where a "full" run starts (home when empty).
     #[serde(default)]
     folder: Option<String>,
+    /// "full" only: also run shell commands.
+    #[serde(default)]
+    shell: bool,
     /// Allow web search and fetching pages.
     #[serde(default)]
     web: bool,
@@ -628,7 +703,24 @@ pub(crate) enum Mode {
     Chat,
     Read,
     Edit,
+    Full,
 }
+
+/// Claude Code's built-in tools in `full` mode without shell: files, skills, deferred-tool
+/// search (MCP tools load through it) and MCP resources. No Bash, PowerShell or Monitor.
+const FULL_NO_SHELL_TOOLS: &[&str] = &[
+    "Read",
+    "Glob",
+    "Grep",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "Skill",
+    "ToolSearch",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "ReadMcpResourceDirTool",
+];
 
 impl Mode {
     fn parse(s: Option<&str>) -> CmdResult<Mode> {
@@ -636,6 +728,7 @@ impl Mode {
             "" | "chat" => Ok(Mode::Chat),
             "read" => Ok(Mode::Read),
             "edit" => Ok(Mode::Edit),
+            "full" => Ok(Mode::Full),
             other => Err(format!("Unknown access mode: {other}")),
         }
     }
@@ -692,10 +785,12 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                 ]
                 .map(String::from),
             );
+            let full = mode == Mode::Full;
             let mut tools: Vec<&str> = match mode {
                 Mode::Chat => vec![],
                 Mode::Read => vec!["Read", "Glob", "Grep"],
                 Mode::Edit => vec!["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit"],
+                Mode::Full => FULL_NO_SHELL_TOOLS.to_vec(),
             };
             let mut allowed: Vec<String> = Vec::new();
             if a.web {
@@ -707,20 +802,34 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                 allowed.push("Agent".into());
             }
             args.push("--tools".into());
-            args.push(tools.join(","));
+            if full && a.shell {
+                // Everything Claude Code has, as in a terminal (web search only if allowed).
+                args.push("default".into());
+                if !a.web {
+                    args.push("--disallowedTools".into());
+                    args.push("WebSearch,WebFetch".into());
+                }
+            } else {
+                args.push(tools.join(","));
+            }
             args.push("--permission-mode".into());
             args.push(
-                if mode == Mode::Edit {
-                    "acceptEdits"
-                } else {
-                    "dontAsk"
+                match mode {
+                    // `--tools` above already decides what exists; nothing else is asked.
+                    Mode::Full => "bypassPermissions",
+                    Mode::Edit => "acceptEdits",
+                    _ => "dontAsk",
                 }
                 .into(),
             );
             for s in &a.mcp_servers {
                 allowed.push(format!("mcp__{}", s.name));
             }
-            if a.use_cli_extensions {
+            if full {
+                // Its own MCP servers, plugins' servers and claude.ai connectors all load, and
+                // bypassPermissions allows every tool that exists: no allow list needed.
+                allowed.clear();
+            } else if a.use_cli_extensions {
                 for s in &ctx.cli_servers {
                     allowed.push(format!("mcp__{s}"));
                 }
@@ -739,7 +848,7 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                 args.push("--agents".into());
                 args.push(f.display().to_string());
             }
-            if !a.use_cli_extensions && !a.allow_skills {
+            if !full && !a.use_cli_extensions && !a.allow_skills {
                 args.push("--disable-slash-commands".into());
             }
             if let Some(sp) = a.system_prompt.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -782,11 +891,14 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                 args.push("resume".into());
             }
             args.extend(["--json", "--skip-git-repo-check"].map(String::from));
-            let sandbox = if mode == Mode::Edit {
-                "workspace-write"
-            } else {
-                "read-only"
+            // Codex works through commands; without `shell` a full run reads anywhere in
+            // its read-only sandbox, with it there's no sandbox (as in a terminal).
+            let sandbox = match mode {
+                Mode::Full if a.shell => "danger-full-access",
+                Mode::Edit => "workspace-write",
+                _ => "read-only",
             };
+            let own = a.use_cli_extensions || mode == Mode::Full;
             let mut overrides = vec![
                 format!("sandbox_mode={}", toml_string(sandbox)),
                 format!("approval_policy={}", toml_string("never")),
@@ -795,7 +907,7 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                     toml_string(if a.web { "live" } else { "disabled" })
                 ),
             ];
-            if !a.use_cli_extensions {
+            if !own {
                 // Codex has no "only these servers" switch: turn each configured one off.
                 for s in &ctx.cli_servers {
                     if !a.mcp_servers.iter().any(|m| &m.name == s) {
@@ -813,7 +925,7 @@ pub(crate) fn build_args(tool: Tool, a: &CliRunArgs, ctx: &RunContext) -> CmdRes
                 args.push("-c".into());
                 args.push(o);
             }
-            if !a.use_cli_extensions {
+            if !own {
                 // Connected apps (ChatGPT connectors) are tools too.
                 args.push("--disable".into());
                 args.push("apps".into());
@@ -925,6 +1037,7 @@ pub async fn ai_cli_run(
             private.clone()
         }
         Mode::Read | Mode::Edit => validate_folder(args.folder.as_deref().unwrap_or(""))?,
+        Mode::Full => validate_start_folder(args.folder.as_deref())?,
     };
 
     let mut ctx = RunContext::default();
@@ -1263,21 +1376,30 @@ pub async fn ai_codex_models() -> CmdResult<Vec<serde_json::Value>> {
     .map_err(|e| e.to_string())
 }
 
-/// Native folder picker for the folder a chat may read or edit.
+/// Native folder picker for the folder a chat may read or edit (`full`: where it starts,
+/// which may be any folder).
 #[tauri::command]
-pub async fn ai_pick_folder(app: tauri::AppHandle) -> CmdResult<Option<String>> {
+pub async fn ai_pick_folder(
+    app: tauri::AppHandle,
+    full: Option<bool>,
+) -> CmdResult<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     let Some(picked) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;
-    validate_folder(&path.display().to_string()).map(|p| Some(p.display().to_string()))
+    ai_check_folder(path.display().to_string(), full).map(Some)
 }
 
 /// Checks a folder typed or pasted by the user (same rules as the picker).
 #[tauri::command]
-pub fn ai_check_folder(path: String) -> CmdResult<String> {
-    validate_folder(&path).map(|p| p.display().to_string())
+pub fn ai_check_folder(path: String, full: Option<bool>) -> CmdResult<String> {
+    if full == Some(true) {
+        validate_start_folder(Some(&path))
+    } else {
+        validate_folder(&path)
+    }
+    .map(|p| p.display().to_string())
 }
 
 #[cfg(test)]
@@ -1297,6 +1419,7 @@ mod tests {
             ephemeral: false,
             mode: None,
             folder: None,
+            shell: false,
             web: false,
             mcp_servers: vec![],
             use_cli_extensions: false,
@@ -1459,6 +1582,55 @@ mod tests {
     }
 
     #[test]
+    fn full_mode_is_like_a_terminal_with_shell_as_a_switch() {
+        let mut r = run_args("claude", None, None);
+        r.mode = Some("full".into());
+        let a = build(Tool::Claude, &r);
+        assert!(pair(&a, "--permission-mode", "bypassPermissions"));
+        assert!(pair(&a, "--tools", &FULL_NO_SHELL_TOOLS.join(",")));
+        assert!(!a
+            .iter()
+            .any(|x| x.contains("Bash") || x.contains("PowerShell")));
+        // Its own servers, plugins, connectors and skills: nothing switched off.
+        assert!(!a.contains(&"--strict-mcp-config".to_string()));
+        assert!(!a.contains(&"--disable-slash-commands".to_string()));
+        assert!(!a.contains(&"--allowedTools".to_string()));
+        assert!(a.contains(&"--append-system-prompt".to_string()));
+
+        r.shell = true;
+        let a = build(Tool::Claude, &r);
+        assert!(pair(&a, "--tools", "default"));
+        assert!(pair(&a, "--disallowedTools", "WebSearch,WebFetch"));
+        r.web = true;
+        let a = build(Tool::Claude, &r);
+        assert!(!a.contains(&"--disallowedTools".to_string()));
+
+        // `shell` means nothing outside full mode.
+        let mut e = run_args("claude", None, None);
+        e.mode = Some("edit".into());
+        e.shell = true;
+        assert!(pair(
+            &build(Tool::Claude, &e),
+            "--permission-mode",
+            "acceptEdits"
+        ));
+
+        let mut c = run_args("codex", None, None);
+        c.mode = Some("full".into());
+        let ctx = RunContext {
+            cli_servers: vec!["blender".into()],
+            ..Default::default()
+        };
+        let a = build_args(Tool::Codex, &c, &ctx).unwrap();
+        assert!(pair(&a, "-c", "sandbox_mode=\"read-only\""));
+        assert!(!a.contains(&"mcp_servers.blender.enabled=false".to_string()));
+        assert!(!pair(&a, "--disable", "apps"));
+        c.shell = true;
+        let a = build_args(Tool::Codex, &c, &ctx).unwrap();
+        assert!(pair(&a, "-c", "sandbox_mode=\"danger-full-access\""));
+    }
+
+    #[test]
     fn codex_switches_off_its_own_servers_and_adds_skeles() {
         let mut r = run_args("codex", None, None);
         r.mcp_servers = vec![McpServerSpec {
@@ -1498,6 +1670,27 @@ mod tests {
         let json = r#"{"numStartups":3,"mcpServers":{"fetch":{"command":"uvx"},"bad name":{}}}"#;
         assert_eq!(claude_user_servers(json), vec!["fetch"]);
         assert!(claude_user_servers("not json").is_empty());
+    }
+
+    #[test]
+    fn turns_claude_code_servers_into_specs() {
+        let cfg = r#"{"mcpServers":{
+            "Roblox_Studio":{"type":"stdio","command":"cmd","args":["/c","rbx-mcp"],"env":{"TOKEN":"s3cret"}},
+            "supabase":{"type":"http","url":"https://mcp.supabase.com/mcp","headers":{"Authorization":"Bearer x"}},
+            "old":{"command":"node","args":["s.js"]},
+            "bad name":{"command":"x"}
+        }}"#;
+        let r = claude_server_spec(cfg, "Roblox_Studio").unwrap();
+        assert_eq!((r.transport.as_str(), r.command.as_str()), ("stdio", "cmd"));
+        assert_eq!(r.args, ["/c", "rbx-mcp"]);
+        assert_eq!(r.env["TOKEN"], "s3cret");
+        let s = claude_server_spec(cfg, "supabase").unwrap();
+        assert_eq!(s.transport, "http");
+        assert_eq!(s.headers["Authorization"], "Bearer x");
+        assert_eq!(claude_server_spec(cfg, "old").unwrap().transport, "stdio");
+        assert!(claude_server_spec(cfg, "bad name").is_err());
+        assert!(claude_server_spec(cfg, "missing").is_err());
+        assert!(claude_server_spec("not json", "x").is_err());
     }
 
     #[test]
@@ -1549,7 +1742,17 @@ mod tests {
         assert!(validate_folder(root).is_err());
         if let Some(h) = home() {
             assert!(validate_folder(&h.display().to_string()).is_err());
+            // A full-access chat may start anywhere, the home folder by default.
+            let canon = plain_path(std::fs::canonicalize(&h).unwrap());
+            assert_eq!(validate_start_folder(None).unwrap(), canon);
+            assert_eq!(
+                validate_start_folder(Some(&h.display().to_string())).unwrap(),
+                canon
+            );
         }
+        assert!(validate_start_folder(Some(root)).is_ok());
+        assert!(validate_start_folder(Some("relative/path")).is_err());
+        assert!(validate_start_folder(Some(&file.display().to_string())).is_err());
     }
 
     #[test]

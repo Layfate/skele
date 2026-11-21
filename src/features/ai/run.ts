@@ -33,6 +33,7 @@ export function systemPrompt(
   ctx: {
     mode?: Chat["mode"];
     folder?: string;
+    shell?: boolean;
     agent?: Agent;
     multi?: boolean;
     mcp?: string[];
@@ -65,6 +66,11 @@ export function systemPrompt(
     ctx.mode === "read" && ctx.folder ? `You can read files in the folder ${ctx.folder} with your tools. You can't change files.` : "",
     ctx.mode === "edit" && ctx.folder
       ? `You can read and change files in the folder ${ctx.folder} with your tools. Make only the changes the user asks for, and say which files you changed.`
+      : "",
+    ctx.mode === "full"
+      ? `You have full access to this computer: you can ${ctx.provider === "codex-cli" && !ctx.shell ? "read" : "read and change"} files anywhere (you start in ${ctx.folder || "the user's home folder"}; use absolute paths for other places) and use all of the user's MCP servers and connectors.${
+          ctx.shell ? " You can also run shell commands." : " You can't run shell commands in this chat."
+        } Make only the changes the user asks for, and say which files you changed.`
       : "",
     ctx.mcp?.length ? `Tools from these MCP servers are available: ${ctx.mcp.join(", ")}.` : "",
     ctx.multi
@@ -160,6 +166,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
     workspaceTools: !!index && PROVIDERS[provider].kind === "api",
     mode: tools ? chat.mode : undefined,
     folder: chat.folder,
+    shell: !!chat.shell,
     agent,
     multi: input.multi,
     mcp: mcp.map((s) => s.name),
@@ -204,11 +211,15 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
   if (tool === "codex" && !session) {
     // Codex has no system-prompt option; give the instructions with the first message.
     const access =
-      chat.mode === "edit"
-        ? "You may change files in the current folder when the user asks for it."
-        : chat.mode === "read"
-          ? "You may read files in the current folder to answer, but don't modify anything."
-          : "This is a conversation, not a coding task: answer directly and don't modify files.";
+      chat.mode === "full"
+        ? chat.shell
+          ? "You may read and change files anywhere on this computer, run commands, and use your MCP servers and apps when the user asks for it."
+          : "You may read files anywhere on this computer and use your MCP servers and apps when the user asks for it. Your sandbox is read-only in this chat."
+        : chat.mode === "edit"
+          ? "You may change files in the current folder when the user asks for it."
+          : chat.mode === "read"
+            ? "You may read files in the current folder to answer, but don't modify anything."
+            : "This is a conversation, not a coding task: answer directly and don't modify files.";
     prompt = `<instructions>\n${system}\n${access}\n</instructions>\n\n${prompt}`;
   }
   return done(
@@ -222,6 +233,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult & { provider
       path: tool === "claude" ? settings.claudePath : settings.codexPath,
       mode: chat.mode ?? "chat",
       folder: chat.folder,
+      shell: !!chat.shell,
       web: !!chat.web,
       mcpServers: mcp.map(toSpec),
       useCliExtensions: settings.useCliExtensions,

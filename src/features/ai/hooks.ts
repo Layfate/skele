@@ -129,7 +129,7 @@ export function useCreateChat(workspaceId: string) {
   });
 }
 
-export type ChatPatch = Partial<Pick<Chat, "title" | "provider" | "model" | "effort" | "pinned" | "mode" | "folder" | "web" | "mcp" | "agentId">>;
+export type ChatPatch = Partial<Pick<Chat, "title" | "provider" | "model" | "effort" | "pinned" | "mode" | "folder" | "shell" | "web" | "mcp" | "agentId">>;
 
 export function useUpdateChat() {
   const qc = useQueryClient();

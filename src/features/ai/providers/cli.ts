@@ -264,16 +264,16 @@ export async function codexModels(): Promise<ModelOption[]> {
   return invoke<ModelOption[]>("ai_codex_models");
 }
 
-/** Native folder picker; returns the folder or null. */
-export async function pickFolder(): Promise<string | null> {
+/** Native folder picker; returns the folder or null. `full`: any folder (where a full-access chat starts). */
+export async function pickFolder(full = false): Promise<string | null> {
   const { invoke } = await tauri();
-  return invoke<string | null>("ai_pick_folder");
+  return invoke<string | null>("ai_pick_folder", { full });
 }
 
 /** Checks a typed folder path; returns the full path, or throws why it can't be used. */
-export async function checkFolder(path: string): Promise<string> {
+export async function checkFolder(path: string, full = false): Promise<string> {
   const { invoke } = await tauri();
-  return invoke<string>("ai_check_folder", { path });
+  return invoke<string>("ai_check_folder", { path, full });
 }
 
 /** Readable tail of a tool's error output. */
@@ -298,6 +298,8 @@ export type CliRunInput = {
   ephemeral?: boolean;
   mode?: AccessMode;
   folder?: string;
+  /** "full" only: also run shell commands. */
+  shell?: boolean;
   web?: boolean;
   mcpServers?: McpSpec[];
   useCliExtensions?: boolean;
@@ -350,6 +352,7 @@ export async function runCli(input: CliRunInput): Promise<TurnResult> {
         ephemeral: !!input.ephemeral,
         mode: input.mode ?? "chat",
         folder: input.folder || null,
+        shell: input.mode === "full" && !!input.shell,
         web: !!input.web,
         mcpServers: input.mcpServers ?? [],
         useCliExtensions: !!input.useCliExtensions,

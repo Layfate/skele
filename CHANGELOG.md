@@ -6,6 +6,18 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-21
+
+### Added
+
+- **Full access** for AI chats (shield button → Full access, or `/mode full`): the AI works
+  like Claude Code or Codex in a terminal. It reads and edits files anywhere on your computer,
+  starting in your home folder or a folder you pick (a whole drive works too), and uses every
+  MCP server, plugin, skill and claude.ai connector you set up in Claude Code / Codex (Roblox
+  Studio, Supabase, Blender…), not only Skele's own. **Run commands** (off by default) also
+  lets it run shell commands with no prompt. The Claude API, OpenAI API and OpenRouter get the
+  same: file tools for any path, plus Claude Code's own MCP servers.
+
 ## [0.2.3] - 2026-11-20
 
 ### Added

@@ -1,7 +1,7 @@
 // Tools for API models: argument checks, tool names, and OpenRouter's tool loop against a
 // stubbed fetch (a model that calls a tool, gets the result, then answers).
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkArgs, runTool, toolName, type ApiTooling } from "@/features/ai/tools";
+import { apiTooling, checkArgs, MAX_API_TOOLS, runTool, toolName, type ApiTooling } from "@/features/ai/tools";
 import { streamOpenRouter } from "@/features/ai/providers/openrouter";
 import type { TurnHandlers } from "@/features/ai/providers/types";
 
@@ -9,7 +9,15 @@ const schema = { type: "object", properties: { path: { type: "string" }, offset:
 
 const sse = (...events: unknown[]) => events.map((e) => (typeof e === "string" ? e : `data: ${JSON.stringify(e)}`)).join("\n\n") + "\n\n";
 
-afterEach(() => vi.unstubAllGlobals());
+const native = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
+vi.mock("@/lib/desktop", () => ({ isDesktop: () => true }));
+vi.mock("@/features/gmail/ai-tools", () => ({ gmailToolsEnabled: async () => false, gmailTools: () => [] }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  native.invoke.mockReset();
+});
 
 describe("API model tools", () => {
   it("checks arguments before running a tool", () => {
@@ -89,5 +97,53 @@ describe("API model tools", () => {
     const second = bodies[1].messages as Record<string, unknown>[];
     expect(second.at(-2)).toMatchObject({ role: "assistant", tool_calls: [{ id: "call_1", function: { name: "read_file", arguments: '{"path":"a.ts"}' } }] });
     expect(second.at(-1)).toEqual({ role: "tool", tool_call_id: "call_1", content: "hi" });
+  });
+
+  it("full access: files anywhere, writing included, and Claude Code's own MCP servers by name", async () => {
+    native.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "ai_cli_mcp_list") {
+        return [
+          { name: "Roblox_Studio", transport: "stdio", enabled: true },
+          { name: "old", transport: "sse", enabled: true },
+          { name: "mine", transport: "stdio", enabled: true },
+        ];
+      }
+      if (cmd === "ai_mcp_tools") return [{ name: args.cliServer ? "list_studios" : "ping", description: "", inputSchema: { type: "object", properties: {} } }];
+      if (cmd === "ai_mcp_call") return { text: `called ${String(args.cliServer ?? (args.server as { name: string }).name)}`, isError: false };
+      if (cmd === "ai_file_tool") return `${String(args.tool)} full=${String(args.full)} write=${String(args.write)}`;
+      throw new Error(cmd);
+    });
+    const mine = { id: "m", name: "mine", transport: "stdio" as const, command: "node", args: [], env: {}, url: "", headers: {}, enabled: true, autoAttach: false, createdAt: "" };
+    const notes: string[] = [];
+    const t = await apiTooling({ mode: "full", folder: undefined, web: false, workspaceId: "w" }, [mine], (l) => notes.push(l));
+    const names = t.tools.map((x) => x.name);
+    expect(names).toEqual(expect.arrayContaining(["list_files", "read_file", "search_files", "write_file", "edit_file", "mine__ping", "Roblox_Studio__list_studios"]));
+    // SSE servers can't be used by API models; a Skele server of the same name wins.
+    expect(names.some((n) => n.startsWith("old__"))).toBe(false);
+    expect(names.filter((n) => n.startsWith("mine__"))).toHaveLength(1);
+    expect(t.tools.find((x) => x.name === "read_file")!.description).toMatch(/absolute/);
+    const write = await t.tools.find((x) => x.name === "write_file")!.run({ path: "C:/x.txt", content: "" });
+    expect(write.text).toBe("write_file full=true write=true");
+    expect((await t.tools.find((x) => x.name === "Roblox_Studio__list_studios")!.run({})).text).toBe("called Roblox_Studio");
+    expect(native.invoke).toHaveBeenCalledWith("ai_mcp_call", { cliServer: "Roblox_Studio", tool: "list_studios", args: {} });
+    expect(notes).toEqual([]);
+
+    // Other modes never reach Claude Code's servers.
+    native.invoke.mockClear();
+    const read = await apiTooling({ mode: "read", folder: "/p", web: false, workspaceId: "w" }, [], () => {});
+    expect(read.tools.map((x) => x.name)).toEqual(["list_files", "read_file", "search_files"]);
+    expect(native.invoke).not.toHaveBeenCalledWith("ai_cli_mcp_list", expect.anything());
+  });
+
+  it("keeps a request under the provider's tool limit", async () => {
+    native.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "ai_mcp_tools") return Array.from({ length: 100 }, (_, i) => ({ name: `t${i}`, description: "", inputSchema: { type: "object" } }));
+      return [];
+    });
+    const server = (name: string) => ({ id: name, name, transport: "stdio" as const, command: "x", args: [], env: {}, url: "", headers: {}, enabled: true, autoAttach: false, createdAt: "" });
+    const notes: string[] = [];
+    const t = await apiTooling({ mode: "chat", web: false, workspaceId: "w" }, [server("a"), server("b")], (l) => notes.push(l));
+    expect(t.tools).toHaveLength(MAX_API_TOOLS);
+    expect(notes[0]).toMatch(/72 MCP tools were left out/);
   });
 });

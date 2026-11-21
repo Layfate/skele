@@ -44,8 +44,11 @@ export const isEffort = (s: string): s is Effort => EFFORTS.some((e) => e.id ===
  * - read: read files in the chat's folder.
  * - edit: read and change files in the chat's folder (never runs shell commands outside a
  *   sandbox: Claude Code gets no shell, Codex runs commands in its workspace sandbox).
+ * - full: like the CLI in a terminal: reads and edits anywhere, starting in the chat's folder
+ *   (the home folder when none is set), and uses every MCP server, plugin, skill and
+ *   connector set up in Claude Code / Codex. Shell commands only with the chat's `shell`.
  */
-export type AccessMode = "chat" | "read" | "edit";
+export type AccessMode = "chat" | "read" | "edit" | "full";
 
 export type ProviderInfo = {
   id: ProviderId;
@@ -260,8 +263,10 @@ export type Chat = {
   updatedAt: string;
   /** What the AI may do (CLI providers). Defaults to "chat". */
   mode?: AccessMode;
-  /** The folder "read" / "edit" work in. */
+  /** The folder "read" / "edit" work in; where "full" starts (home when unset). */
   folder?: string;
+  /** "full" only: the AI may also run shell commands. */
+  shell?: boolean;
   /** Allow web search and fetching pages. */
   web?: boolean;
   /** Skele MCP servers this chat uses (ids). */

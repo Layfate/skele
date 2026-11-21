@@ -400,6 +400,10 @@ describe("commands", () => {
     expect((await runCommand("model", "a b", chat([]), DEFAULT_AI_SETTINGS, ctx)).patch).toBeUndefined();
     expect((await runCommand("mode", "edit", chat([]), DEFAULT_AI_SETTINGS, ctx)).patch).toBeUndefined();
     expect((await runCommand("mode", "edit", chat([], { folder: "/p" }), DEFAULT_AI_SETTINGS, ctx)).patch).toEqual({ mode: "edit" });
+    // Full access needs no folder: it starts in the home folder.
+    const full = await runCommand("mode", "full", chat([]), DEFAULT_AI_SETTINGS, ctx);
+    expect(full.patch).toEqual({ mode: "full" });
+    expect(full.content).toMatch(/home folder/);
     const api = await runCommand("mode", "read", chat([], { provider: "anthropic" }), DEFAULT_AI_SETTINGS, ctx);
     expect(api.content).toMatch(/can only chat/);
     expect((await runCommand("compact", "", chat([]), DEFAULT_AI_SETTINGS, ctx)).compact).toBe(true);

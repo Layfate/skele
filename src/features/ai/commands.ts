@@ -210,6 +210,7 @@ const MODES: Record<AccessMode, string> = {
   chat: "**Chat**: no access to your files",
   read: "**Read files**: can read files in the chat's folder",
   edit: "**Edit files**: can read and change files in the chat's folder",
+  full: "**Full access**: files anywhere, and every MCP server, plugin, skill and connector you set up (shell commands only if you switch them on)",
 };
 
 export async function runCommand(name: string, args: string, chat: Chat, settings: AiSettings, ctx: CommandContext): Promise<CommandResult> {
@@ -318,12 +319,13 @@ export async function runCommand(name: string, args: string, chat: Chat, setting
           "",
           ...Object.values(MODES).map((m) => `- ${m}`),
           "",
-          "Switch with `/mode chat`, `/mode read` or `/mode edit`, or with the shield button.",
+          "Switch with `/mode chat`, `/mode read`, `/mode edit` or `/mode full`, or with the shield button.",
         ].join("\n"),
       };
     }
     const mode = args.toLowerCase() as AccessMode;
-    if (!(mode in MODES)) return { content: "Use `/mode chat`, `/mode read` or `/mode edit`." };
+    if (!(mode in MODES)) return { content: "Use `/mode chat`, `/mode read`, `/mode edit` or `/mode full`." };
+    if (mode === "full") return { content: `Now: ${MODES.full}. Starts in \`${chat.folder || "your home folder"}\`.`, patch: { mode } };
     if (mode !== "chat" && !chat.folder) return { content: "Choose a folder first, with the shield button below the message box." };
     return { content: `Now: ${MODES[mode]}${mode !== "chat" ? ` (\`${chat.folder}\`)` : ""}.`, patch: { mode } };
   }

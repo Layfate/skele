@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
-import { AtSign, Check, FolderOpen, Globe, MessageCircle, PencilLine, Plug, Settings2, Shield, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react";
+import { AtSign, Check, FolderOpen, Globe, MessageCircle, PencilLine, Plug, Settings2, Shield, ShieldAlert, ShieldCheck, SquareTerminal, Unlock, type LucideIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { checkFolder, pickFolder } from "../providers/cli";
 import { PROVIDERS, type AccessMode, type Agent, type McpServer, type ProviderId } from "../types";
 
-export type Access = { mode: AccessMode; folder?: string; web: boolean; mcp: string[] };
+export type Access = { mode: AccessMode; folder?: string; shell?: boolean; web: boolean; mcp: string[] };
 
 const MODES: { id: AccessMode; label: string; short: string; hint: string; icon: LucideIcon }[] = [
   { id: "chat", label: "Chat only", short: "Chat", hint: "Talks with you. No access to files on this computer.", icon: MessageCircle },
@@ -31,6 +31,13 @@ const MODES: { id: AccessMode; label: string; short: string; hint: string; icon:
     short: "Edit",
     hint: "Can also create and change files in that folder. Claude Code gets no shell; Codex runs commands in its sandbox; API models get Skele's file tools (no commands).",
     icon: PencilLine,
+  },
+  {
+    id: "full",
+    label: "Full access",
+    short: "Full",
+    hint: "Like Claude Code in a terminal: files anywhere on this computer, plus every MCP server, plugin, skill and connector you set up.",
+    icon: Unlock,
   },
 ];
 
@@ -60,10 +67,20 @@ export function AccessMenu({
   const on = new Set(value.mcp);
   const active = enabled.filter((s) => on.has(s.id)).length;
   const current = MODES.find((m) => m.id === value.mode) ?? MODES[0];
-  const Icon = value.mode === "edit" ? ShieldAlert : value.mode === "read" ? ShieldCheck : Shield;
+  const full = value.mode === "full";
+  const Icon = full ? Unlock : value.mode === "edit" ? ShieldAlert : value.mode === "read" ? ShieldCheck : Shield;
 
   const choose = async (mode: AccessMode) => {
-    if (mode === "chat" || value.folder) return onChange({ mode });
+    // Full access starts in the home folder unless a folder is set.
+    if (mode === "chat" || mode === "full") return onChange({ mode });
+    if (value.folder) {
+      // A folder chosen for full access may be one read/edit can't use (a drive, home).
+      try {
+        return onChange({ mode, folder: await checkFolder(value.folder) });
+      } catch {
+        // Pick another one below.
+      }
+    }
     try {
       const folder = await pickFolder();
       if (folder) onChange({ mode, folder });
@@ -73,7 +90,7 @@ export function AccessMenu({
   };
   const changeFolder = async () => {
     try {
-      const folder = await pickFolder();
+      const folder = await pickFolder(full);
       if (folder) onChange({ folder });
     } catch (e) {
       toast.error(errorMessage(e));
@@ -87,7 +104,7 @@ export function AccessMenu({
     setTyped(null);
     if (!raw || raw === value.folder) return setFolderError("");
     try {
-      onChange({ folder: await checkFolder(raw) });
+      onChange({ folder: await checkFolder(raw, full) });
       setFolderError("");
     } catch (e) {
       setFolderError(errorMessage(e));
@@ -103,11 +120,12 @@ export function AccessMenu({
           aria-label={`Access: ${current.label}`}
           className={cn(
             "flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent",
-            value.mode === "edit" && "text-amber-700 dark:text-amber-400",
+            (value.mode === "edit" || full) && "text-amber-700 dark:text-amber-400",
           )}
         >
           <Icon className="size-4" strokeWidth={1.75} />
           <span className="hidden @md:inline">{current.short}</span>
+          {full && value.shell && <SquareTerminal className="size-3.5" aria-label="Runs commands" />}
           {value.mode !== "chat" && value.folder && (
             <span className="hidden max-w-28 truncate text-xs opacity-80 @2xl:inline">· {folderName(value.folder)}</span>
           )}
@@ -138,7 +156,7 @@ export function AccessMenu({
               onClick={() => void choose(m.id)}
               className={cn("flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left text-sm hover:bg-accent", m.id === value.mode && "bg-accent/60")}
             >
-              <m.icon className={cn("mt-0.5 size-4 shrink-0", m.id === "edit" ? "text-amber-600" : "text-muted-foreground")} strokeWidth={1.75} />
+              <m.icon className={cn("mt-0.5 size-4 shrink-0", m.id === "edit" || m.id === "full" ? "text-amber-600" : "text-muted-foreground")} strokeWidth={1.75} />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">{m.label}</span>
                 <span className="block text-xs text-muted-foreground">{m.hint}</span>
@@ -147,6 +165,20 @@ export function AccessMenu({
             </button>
           ))}
         </div>
+        {full && (
+          <label className="flex items-center justify-between gap-3 border-t px-3 py-2.5 text-sm">
+            <span className="flex items-center gap-2">
+              <SquareTerminal className="size-4 shrink-0 text-amber-600" strokeWidth={1.75} />
+              <span>
+                <span className="block">Run commands</span>
+                <span className="block text-xs text-muted-foreground">
+                  Shell commands (PowerShell, npm, git…) with no prompt. Codex needs this to edit files.
+                </span>
+              </span>
+            </span>
+            <Switch checked={!!value.shell} onCheckedChange={(shell) => onChange({ shell })} aria-label="Run commands" />
+          </label>
+        )}
         <div className={cn("border-t px-3 py-2 text-xs", value.mode === "chat" && "text-muted-foreground")}>
           <div className="flex items-center gap-2">
             <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
@@ -160,7 +192,7 @@ export function AccessMenu({
                   void commitTyped();
                 }
               }}
-              placeholder="Folder for reading and editing"
+              placeholder={full ? "Starts in your home folder" : "Folder for reading and editing"}
               aria-label="Folder"
               spellCheck={false}
               className="min-w-0 flex-1 rounded bg-transparent py-0.5 font-mono outline-none placeholder:font-sans placeholder:text-muted-foreground focus:bg-muted/60"
@@ -209,8 +241,15 @@ export function AccessMenu({
               </label>
             ))
           )}
-          {cli && cliExtensions && (
-            <p className="px-1.5 pt-1 text-xs text-muted-foreground">Also uses the MCP servers, plugins and skills set up in Claude Code and Codex.</p>
+          {full ? (
+            <p className="px-1.5 pt-1 text-xs text-muted-foreground">
+              {cli
+                ? "Also uses every MCP server, plugin, skill and connector set up in Claude Code and Codex."
+                : "Also uses the MCP servers set up in Claude Code."}
+            </p>
+          ) : (
+            cli &&
+            cliExtensions && <p className="px-1.5 pt-1 text-xs text-muted-foreground">Also uses the MCP servers, plugins and skills set up in Claude Code and Codex.</p>
           )}
         </div>
         )}

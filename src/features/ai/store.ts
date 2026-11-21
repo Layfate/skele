@@ -49,7 +49,7 @@ async function writeChat(chat: Chat) {
 }
 
 export type NewChat = { workspaceId: string; provider: ProviderId; model: string; effort?: Effort } & Partial<
-  Pick<Chat, "mode" | "folder" | "web" | "mcp" | "agentId">
+  Pick<Chat, "mode" | "folder" | "shell" | "web" | "mcp" | "agentId">
 >;
 
 export function createChat(input: NewChat): Promise<Chat> {

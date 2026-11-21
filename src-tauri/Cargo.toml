@@ -1,6 +1,6 @@
 [package]
 name = "skele"
-version = "0.2.3"
+version = "0.2.4"
 description = "Skele: a calm, local-first workspace for notes, tasks, projects and databases"
 authors = ["Skele contributors"]
 license = "MIT"

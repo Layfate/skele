@@ -177,7 +177,7 @@ function Conversation({ chatId, settings }: { chatId: string | null; settings: A
   const effort = chat.data?.effort ?? draft.effort ?? "medium";
   const autoServers = (servers.data ?? []).filter((s) => s.enabled && s.autoAttach).map((s) => s.id);
   const access: Access = chat.data
-    ? { mode: chat.data.mode ?? "chat", folder: chat.data.folder, web: !!chat.data.web, mcp: chat.data.mcp ?? [] }
+    ? { mode: chat.data.mode ?? "chat", folder: chat.data.folder, shell: !!chat.data.shell, web: !!chat.data.web, mcp: chat.data.mcp ?? [] }
     : (draft.access ?? { mode: "chat", web: false, mcp: autoServers });
   const agentId = chat.data ? chat.data.agentId : draft.agentId;
   const messages = chat.data?.messages ?? [];

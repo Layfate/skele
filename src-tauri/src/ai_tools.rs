@@ -5,6 +5,8 @@
 //! - File tools in the chat's folder: list, read and search ("read" mode), plus write and
 //!   edit ("edit" mode). Every path is resolved inside the folder (no `..` or links out of
 //!   it), the folder is checked like the CLIs' (`validate_folder`), and nothing runs commands.
+//!   "full" chats read and write anywhere: paths are relative to the folder the chat starts
+//!   in (the home folder by default) or absolute.
 //! - MCP servers: a session per server stays open between calls (stdio servers keep running
 //!   until Skele quits; HTTP servers keep their session id), so a turn with ten tool calls
 //!   doesn't start the server ten times.
@@ -18,7 +20,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::ai::{
-    command, home, kill_tree, plain_path, tail, validate_folder, which, CmdResult, McpServerSpec,
+    claude_config_file, claude_server_spec, command, home, kill_tree, plain_path, tail,
+    validate_folder, validate_start_folder, which, CmdResult, McpServerSpec,
 };
 use crate::ai_ext::{initialize_request, rpc_from_body};
 
@@ -79,6 +82,29 @@ pub fn resolve_in(root: &Path, rel: &str) -> CmdResult<PathBuf> {
     Ok(out)
 }
 
+/// "full" chats: `rel` relative to `root`, or absolute, anywhere on this computer (`..` is
+/// resolved, not refused).
+pub fn resolve_anywhere(root: &Path, rel: &str) -> CmdResult<PathBuf> {
+    let rel = rel.trim();
+    let given = Path::new(if rel.is_empty() { "." } else { rel });
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        root.join(given)
+    };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Ok(plain_path(out))
+}
+
 fn rel_of(root: &Path, p: &Path) -> String {
     p.strip_prefix(root)
         .unwrap_or(p)
@@ -134,16 +160,25 @@ fn need<'a>(args: &'a serde_json::Value, key: &str) -> CmdResult<&'a str> {
     arg(args, key).ok_or_else(|| format!("Missing \"{key}\"."))
 }
 
-/// Runs one file tool in `root`. `write` allows write_file and edit_file ("edit" mode).
+/// Runs one file tool in `root`. `write` allows write_file and edit_file ("edit" mode);
+/// `anywhere` lets paths leave `root` ("full" mode).
 pub fn file_tool(
     root: &Path,
     write: bool,
+    anywhere: bool,
     tool: &str,
     args: &serde_json::Value,
 ) -> CmdResult<String> {
+    let resolve = |rel: &str| {
+        if anywhere {
+            resolve_anywhere(root, rel)
+        } else {
+            resolve_in(root, rel)
+        }
+    };
     match tool {
         "list_files" => {
-            let dir = resolve_in(root, arg(args, "path").unwrap_or("."))?;
+            let dir = resolve(arg(args, "path").unwrap_or("."))?;
             if !dir.is_dir() {
                 return Err(format!("{} isn't a folder.", rel_of(root, &dir)));
             }
@@ -176,7 +211,7 @@ pub fn file_tool(
             Ok(lines.join("\n"))
         }
         "read_file" => {
-            let p = resolve_in(root, need(args, "path")?)?;
+            let p = resolve(need(args, "path")?)?;
             if !p.is_file() {
                 return Err(format!("{} isn't a file.", rel_of(root, &p)));
             }
@@ -218,7 +253,7 @@ pub fn file_tool(
             if query.trim().is_empty() {
                 return Err("The search is empty.".into());
             }
-            let dir = resolve_in(root, arg(args, "path").unwrap_or("."))?;
+            let dir = resolve(arg(args, "path").unwrap_or("."))?;
             let mut hits = Vec::new();
             walk(&dir, 12, 20_000, |p, is_dir, _| {
                 if hits.len() >= 200 {
@@ -263,7 +298,7 @@ pub fn file_tool(
             Err("This chat can only read files. Switch it to Edit files to change them.".into())
         }
         "write_file" => {
-            let p = resolve_in(root, need(args, "path")?)?;
+            let p = resolve(need(args, "path")?)?;
             let content = need(args, "content")?;
             if content.len() > MAX_WRITE {
                 return Err("That's too much to write at once (5 MB at most).".into());
@@ -284,7 +319,7 @@ pub fn file_tool(
             ))
         }
         "edit_file" => {
-            let p = resolve_in(root, need(args, "path")?)?;
+            let p = resolve(need(args, "path")?)?;
             let old = need(args, "old_text")?;
             let new = need(args, "new_text")?;
             if old.is_empty() {
@@ -319,12 +354,18 @@ pub fn file_tool(
 pub async fn ai_file_tool(
     folder: String,
     write: bool,
+    full: Option<bool>,
     tool: String,
     args: serde_json::Value,
 ) -> CmdResult<String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let root = validate_folder(&folder)?;
-        file_tool(&root, write, &tool, &args)
+        let full = full == Some(true);
+        let root = if full {
+            validate_start_folder(Some(&folder))?
+        } else {
+            validate_folder(&folder)?
+        };
+        file_tool(&root, write || full, full, &tool, &args)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -667,12 +708,31 @@ pub struct McpTool {
     input_schema: serde_json::Value,
 }
 
+/// The server a call is for: one of Skele's (sent by the page), or one set up in Claude
+/// Code, by name ("full" chats). Claude Code's are read here, so their secrets stay out of
+/// the page.
+fn server_of(
+    server: Option<McpServerSpec>,
+    cli_server: Option<String>,
+) -> CmdResult<McpServerSpec> {
+    if let Some(s) = server {
+        return Ok(s);
+    }
+    let name = cli_server.ok_or("No MCP server given.")?;
+    let text = claude_config_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .ok_or("Couldn't read Claude Code's settings.")?;
+    claude_server_spec(&text, &name)
+}
+
 /// The tools an MCP server offers (starting it or opening a session if needed).
 #[tauri::command]
 pub async fn ai_mcp_tools(
     pool: tauri::State<'_, McpPool>,
-    server: McpServerSpec,
+    server: Option<McpServerSpec>,
+    cli_server: Option<String>,
 ) -> CmdResult<Vec<McpTool>> {
+    let server = server_of(server, cli_server)?;
     let v = pool
         .request(
             server,
@@ -763,10 +823,12 @@ pub struct McpCall {
 #[tauri::command]
 pub async fn ai_mcp_call(
     pool: tauri::State<'_, McpPool>,
-    server: McpServerSpec,
+    server: Option<McpServerSpec>,
+    cli_server: Option<String>,
     tool: String,
     args: serde_json::Value,
 ) -> CmdResult<McpCall> {
+    let server = server_of(server, cli_server)?;
     let args = if args.is_object() {
         args
     } else {
@@ -824,12 +886,42 @@ mod tests {
     }
 
     #[test]
+    fn full_chats_reach_paths_anywhere() {
+        let root = temp_root();
+        let outside = root.parent().unwrap().to_path_buf();
+        assert_eq!(
+            resolve_anywhere(&root, "..").unwrap(),
+            plain_path(outside.clone())
+        );
+        assert_eq!(
+            resolve_anywhere(&root, "src/./a.ts").unwrap(),
+            root.join("src").join("a.ts")
+        );
+        let abs = outside.join("x.txt");
+        assert_eq!(
+            resolve_anywhere(&root, &abs.display().to_string()).unwrap(),
+            plain_path(abs)
+        );
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        // A file next to the start folder: refused when confined, fine in a full chat.
+        std::fs::write(root.join("near.txt"), "next door").unwrap();
+        let args = serde_json::json!({ "path": "../near.txt" });
+        assert!(file_tool(&sub, false, false, "read_file", &args).is_err());
+        assert!(file_tool(&sub, false, true, "read_file", &args)
+            .unwrap()
+            .contains("next door"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn reads_writes_edits_searches_and_lists() {
         let root = temp_root();
         let j = |v: serde_json::Value| v;
         // Read-only chats can't write.
         assert!(file_tool(
             &root,
+            false,
             false,
             "write_file",
             &j(serde_json::json!({ "path": "a.txt", "content": "x" }))
@@ -838,6 +930,7 @@ mod tests {
         assert!(file_tool(
             &root,
             true,
+            false,
             "write_file",
             &j(serde_json::json!({ "path": "src/a.txt", "content": "hello\r\nworld\r\n" }))
         )
@@ -846,13 +939,14 @@ mod tests {
         let read = file_tool(
             &root,
             false,
+            false,
             "read_file",
             &j(serde_json::json!({ "path": "src/a.txt" })),
         )
         .unwrap();
         assert!(read.contains("    1\thello") && read.contains("    2\tworld"));
         // \n text matches a \r\n file.
-        file_tool(&root, true, "edit_file", &j(serde_json::json!({ "path": "src/a.txt", "old_text": "hello\nworld", "new_text": "hi\nthere" }))).unwrap();
+        file_tool(&root, true, false, "edit_file", &j(serde_json::json!({ "path": "src/a.txt", "old_text": "hello\nworld", "new_text": "hi\nthere" }))).unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join("src/a.txt")).unwrap(),
             "hi\r\nthere\r\n"
@@ -860,6 +954,7 @@ mod tests {
         assert!(file_tool(
             &root,
             true,
+            false,
             "edit_file",
             &j(serde_json::json!({ "path": "src/a.txt", "old_text": "nope", "new_text": "x" }))
         )
@@ -867,13 +962,14 @@ mod tests {
         let found = file_tool(
             &root,
             false,
+            false,
             "search_files",
             &j(serde_json::json!({ "query": "THERE" })),
         )
         .unwrap();
         assert!(found.contains("src/a.txt:2: there"), "{found}");
         std::fs::create_dir_all(root.join("node_modules/x")).unwrap();
-        let list = file_tool(&root, false, "list_files", &j(serde_json::json!({}))).unwrap();
+        let list = file_tool(&root, false, false, "list_files", &j(serde_json::json!({}))).unwrap();
         assert!(
             list.contains("src/") && list.contains("a.txt") && !list.contains("node_modules"),
             "{list}"

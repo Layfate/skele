@@ -3,6 +3,9 @@
 //
 // - Read files / Edit files: list, read and search in the chat's folder, plus write and edit
 //   in Edit mode. Run by the desktop app (src-tauri/src/ai_tools.rs), confined to the folder.
+// - Full access: the same tools, writing included, for paths anywhere (relative to the folder
+//   the chat starts in, the home folder by default, or absolute), plus the MCP servers set up
+//   in Claude Code (looked up by name in Rust, so their secrets never reach the page).
 // - MCP servers the chat turned on: their tools, through sessions the desktop app keeps open.
 // - Web search: each provider's own (Claude's web_search tool, OpenAI's web_search,
 //   OpenRouter's web plugin), so nothing runs here for it.
@@ -11,7 +14,8 @@
 
 import { gmailTools, gmailToolsEnabled } from "@/features/gmail/ai-tools";
 import { isDesktop } from "@/lib/desktop";
-import { toSpec } from "./extensions";
+import { cliMcpServers, toSpec } from "./extensions";
+import type { McpSpec } from "./providers/cli";
 import type { Chat, McpServer } from "./types";
 import { workspaceTools } from "./workspace";
 
@@ -45,51 +49,57 @@ async function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T>
 /** Tauri commands reject with strings; make them readable for the model. */
 const errText = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : JSON.stringify(e));
 
-function fileTools(folder: string, write: boolean): ApiTool[] {
+/** `full`: paths anywhere on the computer, relative to `folder` (home when empty) or absolute. */
+function fileTools(folder: string, write: boolean, full = false): ApiTool[] {
   const call = (tool: string) => async (args: Record<string, unknown>) => {
     try {
-      return { text: await invoke<string>("ai_file_tool", { folder, write, tool, args }) };
+      return { text: await invoke<string>("ai_file_tool", { folder, write: write || full, full, tool, args }) };
     } catch (e) {
       return { text: errText(e), isError: true };
     }
   };
   const path = (a: Record<string, unknown>) => String(a.path ?? ".");
+  const start = folder || "the user's home folder";
+  const where = full ? `on the user's computer (absolute path, or relative to ${start})` : "in the user's folder";
+  const rel = full ? `File path: absolute, or relative to ${start}.` : "File path, relative to the folder.";
   const tools: ApiTool[] = [
     {
       name: "list_files",
-      description: `List files and folders (3 levels deep) in the user's folder ${folder}, or a subfolder of it. Paths are relative to that folder.`,
-      parameters: obj({ path: str("Subfolder to list, relative to the folder. Omit for the whole folder.") }, []),
+      description: full
+        ? `List files and folders (3 levels deep) anywhere on the user's computer. Relative paths start at ${start}; absolute paths work too.`
+        : `List files and folders (3 levels deep) in the user's folder ${folder}, or a subfolder of it. Paths are relative to that folder.`,
+      parameters: obj({ path: str(full ? `Folder to list. Omit for ${start}.` : "Subfolder to list, relative to the folder. Omit for the whole folder.") }, []),
       run: call("list_files"),
       label: (a) => `Listed ${path(a)}`,
     },
     {
       name: "read_file",
-      description: "Read a text file in the user's folder. Returns numbered lines (up to 2000 at a time; use offset for more).",
-      parameters: obj({ path: str("File path, relative to the folder."), offset: int("First line to read (1-based)."), limit: int("How many lines to read.") }, ["path"]),
+      description: `Read a text file ${where}. Returns numbered lines (up to 2000 at a time; use offset for more).`,
+      parameters: obj({ path: str(rel), offset: int("First line to read (1-based)."), limit: int("How many lines to read.") }, ["path"]),
       run: call("read_file"),
       label: (a) => `Read ${path(a)}`,
     },
     {
       name: "search_files",
-      description: "Search file names and contents in the user's folder for a phrase (case-insensitive). Returns path:line: text matches.",
-      parameters: obj({ query: str("The text to look for."), path: str("Subfolder to search in, relative to the folder. Omit for all of it.") }, ["query"]),
+      description: `Search file names and contents ${where} for a phrase (case-insensitive). Returns path:line: text matches.`,
+      parameters: obj({ query: str("The text to look for."), path: str(full ? `Folder to search in. Omit for ${start}.` : "Subfolder to search in, relative to the folder. Omit for all of it.") }, ["query"]),
       run: call("search_files"),
       label: (a) => `Searched for “${String(a.query ?? "")}”`,
     },
   ];
-  if (write) {
+  if (write || full) {
     tools.push(
       {
         name: "write_file",
-        description: "Create a file, or replace a file's whole content, in the user's folder. Prefer edit_file for changes to existing files.",
-        parameters: obj({ path: str("File path, relative to the folder."), content: str("The complete new content.") }, ["path", "content"]),
+        description: `Create a file, or replace a file's whole content, ${where}. Prefer edit_file for changes to existing files.`,
+        parameters: obj({ path: str(rel), content: str("The complete new content.") }, ["path", "content"]),
         run: call("write_file"),
         label: (a) => `Wrote ${path(a)}`,
       },
       {
         name: "edit_file",
-        description: "Replace one exact, unique piece of text in a file in the user's folder. Read the file first and copy old_text exactly, with enough context to be unique.",
-        parameters: obj({ path: str("File path, relative to the folder."), old_text: str("The exact text to replace."), new_text: str("The text to put in its place.") }, ["path", "old_text", "new_text"]),
+        description: `Replace one exact, unique piece of text in a file ${where}. Read the file first and copy old_text exactly, with enough context to be unique.`,
+        parameters: obj({ path: str(rel), old_text: str("The exact text to replace."), new_text: str("The text to put in its place.") }, ["path", "old_text", "new_text"]),
         run: call("edit_file"),
         label: (a) => `Edited ${path(a)}`,
       },
@@ -109,12 +119,18 @@ export function toolName(server: string, tool: string, taken: Set<string>): stri
   return name;
 }
 
-async function mcpTools(servers: McpServer[], note: (line: string) => void): Promise<ApiTool[]> {
+/** A server for an API model: one of Skele's (its spec), or one of Claude Code's (by name). */
+type McpSource = { name: string; target: { server: McpSpec } | { cliServer: string } };
+
+/** Most tools one request carries (OpenAI's limit); the rest are left out, with a note. */
+export const MAX_API_TOOLS = 128;
+
+async function mcpTools(servers: McpSource[], note: (line: string) => void): Promise<ApiTool[]> {
   const taken = new Set<string>();
   const lists = await Promise.all(
     servers.map(async (s) => {
       try {
-        return { s, tools: await invoke<McpToolInfo[]>("ai_mcp_tools", { server: toSpec(s) }) };
+        return { s, tools: await invoke<McpToolInfo[]>("ai_mcp_tools", s.target) };
       } catch (e) {
         note(`MCP server ${s.name} couldn't start: ${errText(e).split("\n")[0]}`);
         return { s, tools: [] };
@@ -128,7 +144,7 @@ async function mcpTools(servers: McpServer[], note: (line: string) => void): Pro
       parameters: t.inputSchema?.type === "object" ? t.inputSchema : { type: "object", properties: {} },
       run: async (args: Record<string, unknown>) => {
         try {
-          return await invoke<{ text: string; isError: boolean }>("ai_mcp_call", { server: toSpec(s), tool: t.name, args });
+          return await invoke<{ text: string; isError: boolean }>("ai_mcp_call", { ...s.target, tool: t.name, args });
         } catch (e) {
           return { text: errText(e), isError: true };
         }
@@ -153,7 +169,21 @@ export async function apiTooling(
   if (isDesktop()) {
     const mode = chat.mode ?? "chat";
     if ((mode === "read" || mode === "edit") && chat.folder) tools.push(...fileTools(chat.folder, mode === "edit"));
-    if (mcp.length) tools.push(...(await mcpTools(mcp, note)));
+    if (mode === "full") tools.push(...fileTools(chat.folder ?? "", true, true));
+    const sources: McpSource[] = mcp.map((s) => ({ name: s.name, target: { server: toSpec(s) } }));
+    if (mode === "full") {
+      // Claude Code's own servers too (stdio and Streamable HTTP; OAuth sign-ins stay Claude Code's).
+      for (const s of await cliMcpServers("claude").catch(() => [])) {
+        if ((s.transport === "stdio" || s.transport === "http") && !sources.some((x) => x.name === s.name)) {
+          sources.push({ name: s.name, target: { cliServer: s.name } });
+        }
+      }
+    }
+    if (sources.length) tools.push(...(await mcpTools(sources, note)));
+  }
+  if (tools.length > MAX_API_TOOLS) {
+    note(`${tools.length - MAX_API_TOOLS} MCP tools were left out (at most ${MAX_API_TOOLS} in one request). Turn off servers this chat doesn't need.`);
+    tools.length = MAX_API_TOOLS;
   }
   return { tools, web: !!chat.web };
 }

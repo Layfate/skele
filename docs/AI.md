@@ -29,13 +29,24 @@ Each chat has a shield button below the message box (Claude Code and Codex only)
 | **Chat only** (default) | No tools at all; Skele's own system prompt | Read-only sandbox in an empty private folder |
 | **Read files** | `Read`, `Glob`, `Grep` in the chosen folder, `dontAsk` permission mode (reads outside the folder are refused) | Read-only sandbox in the chosen folder |
 | **Edit files** | Also `Edit`, `Write`, `NotebookEdit`, `acceptEdits` mode. **No shell** | `workspace-write` sandbox in the chosen folder (commands run sandboxed, no network) |
+| **Full access** | Like a terminal: `bypassPermissions`, reads and edits anywhere, all of its own MCP servers, plugins' servers, claude.ai connectors and skills. Built-in tools limited to files, skills, `ToolSearch` and MCP resources (**no shell**) unless **Run commands** is on (`--tools default`) | Its own MCP servers and apps; read-only sandbox (reads anywhere), or no sandbox (`danger-full-access`) with **Run commands** |
+
+**Full access** starts in the chat's folder, or the home folder when none is set; any
+folder works, a drive root or the home folder itself too. It's for when the AI should reach
+everything Claude Code reaches in a terminal: MCP servers like Roblox Studio or Supabase,
+connectors, files in other projects. **Run commands** (off by default) adds the shell; Codex
+needs it to change files, since it edits through commands.
 
 The Claude API, OpenAI API and OpenRouter get the same modes through Skele's own tools
 (`src/features/ai/tools.ts`, run by `src-tauri/src/ai_tools.rs`): **Read files** gives them
 `list_files`, `read_file` and `search_files` in the chat's folder, **Edit files** adds
 `write_file` and `edit_file` (exact, unique replacements). They never run commands. Every path
 is resolved inside the folder in Rust (no `..`, no links out of it) and the folder is checked
-like the CLIs'. Arguments are checked against each tool's schema before it runs, and a reply
+like the CLIs'. In **Full access** they get all five tools for any path (absolute, or relative
+to the starting folder), plus the stdio and Streamable HTTP MCP servers set up in Claude Code:
+the page only names them, and Rust reads their command, env and headers from `~/.claude.json`
+(`claude_server_spec`), so their secrets never reach the page. A request carries at most 128
+tools (OpenAI's limit); any beyond that are left out, with a note. Arguments are checked against each tool's schema before it runs, and a reply
 stops after 30 rounds of tool calls. OpenRouter models that can't call tools answer without
 them (the reply says so). Ollama models only chat.
 
@@ -91,7 +102,9 @@ folder, removed after the run; Codex: `-c mcp_servers.<name>…` overrides). It 
 the CLIs' own configuration. Servers already configured in Claude Code or Codex are listed
 read-only, with secrets masked. By default chats don't use them (Codex's are switched off
 per run, and so are its app connectors). Turn on **Use Claude Code's and Codex's own
-extensions** under Providers to let chats use them, along with the CLIs' plugins and skills.
+extensions** under Providers to let chats use them, along with the CLIs' plugins and skills,
+or give a chat **Full access**, which always uses all of them (plugins' MCP servers and
+claude.ai connectors included).
 
 Servers run on your computer with your permissions: only add ones you trust. Servers that
 sign in with OAuth need a one-time `claude mcp login <name>` / `codex mcp login <name>`.
@@ -167,7 +180,7 @@ own provider and model. In a chat:
 ## Slash commands
 
 Skele answers these itself: `/usage`, `/status`, `/compact`, `/model [name]`,
-`/effort [level]`, `/mode [chat|read|edit]`, `/mcp`, `/skills`, `/plugins`, `/agents`, `/new`,
+`/effort [level]`, `/mode [chat|read|edit|full]`, `/mcp`, `/skills`, `/plugins`, `/agents`, `/new`,
 `/help`. Any other `/name` is a skill (or plugin command) and goes to the CLI.
 
 ## Context
